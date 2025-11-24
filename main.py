@@ -21,6 +21,8 @@ class TomasuloUI(QMainWindow):
 
         # Table for visualization
         self.table = QTableWidget()
+        # allow double click to show reservation station details
+        self.table.cellDoubleClicked.connect(self.show_details)
         self.layout.addWidget(self.table)
 
         # Initialize register and instruction labels

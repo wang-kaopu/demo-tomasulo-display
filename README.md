@@ -1,46 +1,47 @@
-# Tomasulo Algorithm Visualization
+# Tomasulo 算法可视化
 
-This project is a Python + PyQt application to visualize the Tomasulo algorithm, which demonstrates out-of-order execution and interactive explanations.
+本项目是一个基于 Python 和 PyQt 的应用程序，用于可视化 Tomasulo 算法，展示乱序执行和交互式解释。
 
-## Features
-- **Visualization**: Displays the state of reservation stations, registers, and instruction queue.
-- **Interactive**: Double-click to view detailed information about each component.
-- **Step-by-step Execution**: Simulate the algorithm clock cycle by clock cycle with a "Step" button.
+## 功能
+- **可视化**：显示保留站、寄存器和指令队列的状态。
+- **交互式**：双击查看每个组件的详细信息。
+- **逐步执行**：通过“Step”按钮模拟算法的时钟周期。
 
-## Requirements
+## 环境要求
 - Python 3.8+
 - PyQt5
 
-## Installation
-1. Clone the repository:
+## 安装
+1. 克隆仓库：
    ```bash
    git clone <repository-url>
    cd demo
    ```
-2. Install dependencies:
+2. 安装依赖：
    ```bash
    pip install PyQt5
    ```
 
-## Usage
-Run the application:
+## 使用方法
+运行应用程序：
 ```bash
 python main.py
 ```
 
-### Loading Instructions
-1. Click the "Load Instructions" button.
-2. Select a text file containing instructions (one instruction per line).
-3. The instructions will be loaded into the simulation and displayed in the UI.
+### 加载指令
+1. 点击“Load Instructions”按钮。
+2. 选择一个包含指令的文本文件（每行一条指令）。
+3. 指令将被加载到模拟中并显示在界面中。
 
-## File Structure
-- `main.py`: Entry point for the PyQt application.
-- `tomasulo.py`: Core logic for the Tomasulo algorithm.
-- `README.md`: Project documentation.
+## 文件结构
+- `main.py`：PyQt 应用程序的入口点。
+- `tomasulo.py`：Tomasulo 算法的核心逻辑。
+- `README.md`：项目文档。
 
 ## TODO
 
 ### 未满足的功能需求
+
 1. **乱序发射与乱序完成**：
    - 当前实现中，指令是按队列顺序发射的，未实现乱序发射。
    - 需要支持根据操作数的可用性动态调整发射顺序。
@@ -69,6 +70,36 @@ python main.py
    - 当前的 `update_table` 方法在每次更新时会重置整个表格，可能影响性能。
    - 优化更新逻辑，仅更新发生变化的部分。
 
-## Future Work
-- Add more detailed visualization for registers and instruction execution.
-- Implement additional instruction types and execution units.
+1. **寄存器重命名可视化**：
+   - 显示寄存器的当前状态，包括值和保留站的映射。
+
+2. **数据相关性处理**：
+   - 在界面中高亮显示 RAW（读后写）、WAR（写后读）、WAW（写后写）相关性及其解决方案。
+
+3. **保留站详细信息**：
+   - 展示保留站的详细信息，包括当前指令和操作数。
+
+4. **功能单元状态**：
+   - 显示功能单元的状态，包括执行进度和延迟。
+
+5. **指令状态更新**：
+   - 提供一个详细的指令状态表，每个周期动态更新。
+
+6. **自定义指令集**：
+   - 允许用户输入自定义指令集进行模拟。
+
+7. **多周期执行**：
+   - 增加一次执行多个周期的功能。
+
+8. **性能统计**：
+   - 包括每周期完成的指令数、执行时间等指标。
+
+9. **执行回溯**：
+   - 允许用户回退到之前的周期。
+
+10. **帮助和文档**：
+    - 在应用程序中添加帮助部分，提供使用说明和常见问题解答。
+
+## 未来工作
+- 为寄存器和指令执行添加更详细的可视化。
+- 实现更多的指令类型和执行单元。

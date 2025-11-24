@@ -1,5 +1,6 @@
 import sys
 from PyQt5.QtWidgets import QApplication, QMainWindow, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget, QPushButton, QMessageBox, QLabel, QHBoxLayout, QFileDialog
+from PyQt5.QtGui import QColor
 from tomasulo import Tomasulo
 
 class TomasuloUI(QMainWindow):
@@ -34,6 +35,11 @@ class TomasuloUI(QMainWindow):
         self.load_button.clicked.connect(self.load_instructions)
         self.layout.addWidget(self.load_button)
 
+        # Step button
+        self.step_button = QPushButton("Step")
+        self.step_button.clicked.connect(self.step_simulation)
+        self.layout.addWidget(self.step_button)
+
         # Ensure table and labels are updated
         self.update_table()
 
@@ -41,13 +47,28 @@ class TomasuloUI(QMainWindow):
         """Update the table with the current state of Tomasulo."""
         state = self.tomasulo.get_state()
         self.table.setRowCount(len(state["reservation_stations"]))
-        self.table.setColumnCount(3)  # Example: Name, Busy, Instruction
-        self.table.setHorizontalHeaderLabels(["Name", "Busy", "Instruction"])
+        self.table.setColumnCount(4)  # Add a column for instruction state
+        self.table.setHorizontalHeaderLabels(["Name", "Busy", "Instruction", "State"])
 
         for i, rs in enumerate(state["reservation_stations"]):
             self.table.setItem(i, 0, QTableWidgetItem(rs.get("name", "")))
             self.table.setItem(i, 1, QTableWidgetItem(str(rs.get("busy", False))))
             self.table.setItem(i, 2, QTableWidgetItem(rs.get("instruction", "")))
+
+            # Determine the state of the instruction
+            if not rs["busy"]:
+                state_text = "Idle"
+                color = QColor("white")
+            elif rs["time_left"] > 0:
+                state_text = "Executing"
+                color = QColor("yellow")
+            else:
+                state_text = "Completed"
+                color = QColor("lightgreen")
+
+            state_item = QTableWidgetItem(state_text)
+            state_item.setBackground(color)
+            self.table.setItem(i, 3, state_item)
 
         # Update register state
         registers = self.tomasulo.get_state()["registers"]
@@ -60,14 +81,29 @@ class TomasuloUI(QMainWindow):
         self.instruction_label.setText(f"Instruction Queue:\n{instr_text}")
 
     def step_simulation(self):
-        """Advance the simulation by one clock cycle."""
+        """Advance the simulation by one clock cycle and display completed operations."""
         self.tomasulo.step()
         self.update_table()
+
+        # Get the completed operations and their effects
+        completed_operations = self.tomasulo.get_completed_operations()
+        if completed_operations:
+            details = "\n".join(completed_operations)
+            QMessageBox.information(self, "Cycle Summary", f"Completed Operations:\n{details}")
 
     def show_details(self, row, column):
         """Show details of the selected reservation station."""
         rs = self.tomasulo.get_state()["reservation_stations"][row]
-        details = f"Name: {rs['name']}\nBusy: {rs['busy']}\nInstruction: {rs['instruction']}\nTime Left: {rs['time_left']}"
+        src1_source = rs.get("src1_source", "N/A")  # Source of the first operand
+        src2_source = rs.get("src2_source", "N/A")  # Source of the second operand
+        details = (
+            f"Name: {rs['name']}\n"
+            f"Busy: {rs['busy']}\n"
+            f"Instruction: {rs['instruction']}\n"
+            f"Time Left: {rs['time_left']}\n"
+            f"Source 1: {src1_source}\n"
+            f"Source 2: {src2_source}"
+        )
         QMessageBox.information(self, "Reservation Station Details", details)
 
     def load_instructions(self):

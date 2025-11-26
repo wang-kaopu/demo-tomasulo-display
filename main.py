@@ -19,71 +19,75 @@ class TomasuloUI(QMainWindow):
         self.layout = QVBoxLayout()
         self.central_widget.setLayout(self.layout)
 
-        # Table for visualization
-        self.table = QTableWidget()
-        self.layout.addWidget(self.table)
+        # Instruction status table
+        self.instruction_table = QTableWidget()
+        self.instruction_table.setColumnCount(5)
+        self.instruction_table.setHorizontalHeaderLabels(["Op", "Dest", "j", "k", "Status"])
+        self.layout.addWidget(self.instruction_table)
 
-        # Initialize register and instruction labels
-        self.register_label = QLabel("Registers:")
-        self.layout.addWidget(self.register_label)
+        # Reservation station table
+        self.reservation_table = QTableWidget()
+        self.reservation_table.setColumnCount(8)
+        self.reservation_table.setHorizontalHeaderLabels(["Time", "Name", "Busy", "Op", "Vj", "Vk", "Qj", "Qk"])
+        self.layout.addWidget(self.reservation_table)
 
-        self.instruction_label = QLabel("Instruction Queue:")
-        self.layout.addWidget(self.instruction_label)
-
-        # Load instructions button
-        self.load_button = QPushButton("Load Instructions")
-        self.load_button.clicked.connect(self.load_instructions)
-        self.layout.addWidget(self.load_button)
+        # Register result status table
+        self.register_table = QTableWidget()
+        self.register_table.setColumnCount(32)  # Assuming 32 registers
+        self.register_table.setHorizontalHeaderLabels([f"F{i}" for i in range(32)])
+        self.layout.addWidget(self.register_table)
 
         # Step button
         self.step_button = QPushButton("Step")
         self.step_button.clicked.connect(self.step_simulation)
         self.layout.addWidget(self.step_button)
 
-        # Ensure table and labels are updated
-        self.update_table()
+        # Load Instructions button
+        self.load_button = QPushButton("Load Instructions")
+        self.load_button.clicked.connect(self.load_instructions)
+        self.layout.addWidget(self.load_button)
 
-    def update_table(self):
-        """Update the table with the current state of Tomasulo."""
+        # Ensure tables are updated
+        self.update_tables()
+
+    def update_tables(self):
+        """Update all tables with the current state of Tomasulo."""
         state = self.tomasulo.get_state()
-        self.table.setRowCount(len(state["reservation_stations"]))
-        self.table.setColumnCount(4)  # Add a column for instruction state
-        self.table.setHorizontalHeaderLabels(["Name", "Busy", "Instruction", "State"])
 
+        # Update instruction status table
+        self.instruction_table.setRowCount(len(state["instruction_queue"]))
+        for i, instr in enumerate(state["instruction_queue"]):
+            parts = instr.split()
+            while len(parts) < 4:
+                parts.append("")  # Fill missing parts with empty strings
+            self.instruction_table.setItem(i, 0, QTableWidgetItem(parts[0]))
+            self.instruction_table.setItem(i, 1, QTableWidgetItem(parts[1]))
+            self.instruction_table.setItem(i, 2, QTableWidgetItem(parts[2]))
+            self.instruction_table.setItem(i, 3, QTableWidgetItem(parts[3]))
+            self.instruction_table.setItem(i, 4, QTableWidgetItem("Issued" if i < state["clock"] else "Pending"))
+
+        # Update reservation station table
+        self.reservation_table.setRowCount(len(state["reservation_stations"]))
         for i, rs in enumerate(state["reservation_stations"]):
-            self.table.setItem(i, 0, QTableWidgetItem(rs.get("name", "")))
-            self.table.setItem(i, 1, QTableWidgetItem(str(rs.get("busy", False))))
-            self.table.setItem(i, 2, QTableWidgetItem(rs.get("instruction", "")))
+            self.reservation_table.setItem(i, 0, QTableWidgetItem(str(rs.get("time_left", ""))))
+            self.reservation_table.setItem(i, 1, QTableWidgetItem(rs.get("name", "")))
+            self.reservation_table.setItem(i, 2, QTableWidgetItem(str(rs.get("busy", False))))
+            self.reservation_table.setItem(i, 3, QTableWidgetItem(rs.get("op", "")))
+            self.reservation_table.setItem(i, 4, QTableWidgetItem(str(rs.get("vj", ""))))
+            self.reservation_table.setItem(i, 5, QTableWidgetItem(str(rs.get("vk", ""))))
+            self.reservation_table.setItem(i, 6, QTableWidgetItem(rs.get("qj", "")))
+            self.reservation_table.setItem(i, 7, QTableWidgetItem(rs.get("qk", "")))
 
-            # Determine the state of the instruction
-            if not rs["busy"]:
-                state_text = "Idle"
-                color = QColor("white")
-            elif rs["time_left"] > 0:
-                state_text = "Executing"
-                color = QColor("yellow")
-            else:
-                state_text = "Completed"
-                color = QColor("lightgreen")
-
-            state_item = QTableWidgetItem(state_text)
-            state_item.setBackground(color)
-            self.table.setItem(i, 3, state_item)
-
-        # Update register state
-        registers = self.tomasulo.get_state()["registers"]
-        reg_text = "\n".join([f"{reg}: {data['value']}" for reg, data in registers.items()])
-        self.register_label.setText(f"Registers:\n{reg_text}")
-
-        # Update instruction queue
-        instruction_queue = self.tomasulo.get_state()["instruction_queue"]
-        instr_text = "\n".join(instruction_queue)
-        self.instruction_label.setText(f"Instruction Queue:\n{instr_text}")
+        # Update register result status table
+        self.register_table.setRowCount(2)  # Two rows: Qi and Data
+        for i, reg in enumerate(state["registers"].values()):
+            self.register_table.setItem(0, i, QTableWidgetItem(reg.get("rename", "")))
+            self.register_table.setItem(1, i, QTableWidgetItem(str(reg.get("value", ""))))
 
     def step_simulation(self):
-        """Advance the simulation by one clock cycle and display completed operations."""
+        """Advance the simulation by one clock cycle."""
         self.tomasulo.step()
-        self.update_table()
+        self.update_tables()
 
         # Get the completed operations and their effects
         completed_operations = self.tomasulo.get_completed_operations()
@@ -114,7 +118,7 @@ class TomasuloUI(QMainWindow):
             with open(file_path, "r") as file:
                 instructions = file.readlines()
                 self.tomasulo.instruction_queue = [instr.strip() for instr in instructions]
-                self.update_table()
+                self.update_tables()
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)

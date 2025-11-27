@@ -191,14 +191,30 @@ class TomasuloUI(QMainWindow):
         file_path, _ = QFileDialog.getOpenFileName(self, "Open Instruction File", "", "Text Files (*.txt);;All Files (*)", options=options)
         if file_path:
             with open(file_path, "r") as file:
-                instructions = [instr.strip() for instr in file.readlines() if instr.strip()]
-                # reset internal state and load
-                self.tomasulo.instruction_queue = []
-                self.tomasulo.completed_operations = []
-                self.tomasulo.completed_total = 0
-                for instr in instructions:
-                    self.tomasulo.add_instruction(instr)
-                self.update_tables()
+                lines = [instr.rstrip('\n') for instr in file.readlines()]
+
+            # reset simulator state before loading
+            self.tomasulo.reset()
+
+            errors = []
+            loaded = 0
+            for lineno, raw in enumerate(lines, start=1):
+                line = raw.strip()
+                if not line:
+                    continue
+                try:
+                    self.tomasulo.add_instruction(line)
+                    loaded += 1
+                except Exception as e:
+                    errors.append(f"Line {lineno}: {line} -> {e}")
+
+            self.update_tables()
+
+            if errors:
+                QMessageBox.warning(self, "Load Instructions - Some lines failed",
+                                    "Some instruction lines were invalid and skipped:\n" + "\n".join(errors))
+            else:
+                QMessageBox.information(self, "Load Instructions", f"Loaded {loaded} instructions")
 
     def reset_simulation(self):
         """Reset the simulator state."""

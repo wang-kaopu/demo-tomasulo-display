@@ -77,8 +77,12 @@ class Tomasulo:
 
     def add_instruction(self, instruction):
         """Add an instruction (text) to the queue as a state dict."""
+        # parse and validate instruction early to avoid repeated parsing later
+        parsed = self.parse_instruction_text(instruction)
+
         entry = {
             "text": instruction,
+            "parsed": parsed,
             "issued": False,
             "issue_cycle": None,
             "exec_start_cycle": None,
@@ -88,17 +92,78 @@ class Tomasulo:
         self.instruction_queue.append(entry)
         # entry contains its own `issued` flag
 
+    def parse_instruction_text(self, text):
+        """Parse instruction text into a structured dict.
+
+        Supported forms:
+        - ADD F3 F1 F2
+        - SUB F3 F1 F2
+        - MUL F3 F1 F2
+        - DIV F3 F1 F2
+        - LOAD F1 100
+        - STORE 100 F1
+
+        Returns dict with keys depending on op. Raises ValueError on format error.
+        """
+        if not isinstance(text, str):
+            raise ValueError("Instruction must be a string")
+        # normalize separators: replace commas with spaces, then split
+        tokens = [tok.strip() for tok in text.replace(',', ' ').split() if tok.strip()]
+        if len(tokens) == 0:
+            raise ValueError("Empty instruction")
+        op = tokens[0].upper()
+        if op in ("ADD", "SUB", "MUL", "DIV"):
+            if len(tokens) != 4:
+                raise ValueError(f"{op} requires 3 operands: dest src1 src2: '{text}'")
+            _, dest, src1, src2 = tokens
+            # basic register name validation
+            if dest not in self.registers:
+                raise ValueError(f"Invalid destination register: {dest}")
+            if src1 not in self.registers:
+                raise ValueError(f"Invalid src1 register: {src1}")
+            if src2 not in self.registers:
+                raise ValueError(f"Invalid src2 register: {src2}")
+            return {"op": op, "dest": dest, "src1": src1, "src2": src2}
+        elif op == "LOAD":
+            if len(tokens) != 3:
+                raise ValueError(f"LOAD requires dest and address: '{text}'")
+            _, dest, addr = tokens
+            if dest not in self.registers:
+                raise ValueError(f"Invalid destination register: {dest}")
+            try:
+                addr_i = int(addr)
+            except Exception:
+                raise ValueError(f"Invalid LOAD address: {addr}")
+            return {"op": op, "dest": dest, "addr": addr_i}
+        elif op == "STORE":
+            if len(tokens) != 3:
+                raise ValueError(f"STORE requires address and src: '{text}'")
+            _, addr, src = tokens
+            if src not in self.registers:
+                raise ValueError(f"Invalid STORE source register: {src}")
+            try:
+                addr_i = int(addr)
+            except Exception:
+                raise ValueError(f"Invalid STORE address: {addr}")
+            return {"op": op, "addr": addr_i, "src": src}
+        else:
+            raise ValueError(f"Unsupported operation: {op}")
+
     def allocate_reservation_station(self, instruction):
         """Allocate a reservation station for the instruction."""
         # Accept either instruction text or an instruction entry dict
         if isinstance(instruction, dict):
-            instruction_text = instruction["text"]
+            instruction_text = instruction.get("text")
+            parsed = instruction.get("parsed")
         else:
             instruction_text = instruction
+            parsed = None
 
-        # Clean up all parts after splitting the instruction
-        parts = [part.strip(',') for part in instruction_text.split()]
-        op = parts[0]
+        # parse if needed
+        if parsed is None:
+            parsed = self.parse_instruction_text(instruction_text)
+
+        op = parsed.get("op")
         # execution durations per op (cycles)
         durations = {
             "ADD": 2,
@@ -108,25 +173,16 @@ class Tomasulo:
             "LOAD": 2,
             "STORE": 2,
         }
+
         if op in ["ADD", "SUB", "MUL", "DIV"]:
-            _, dest, src1, src2 = parts
-            # Clean up src1 and src2 to remove extra characters
-            src1 = src1.strip(',')
-            src2 = src2.strip(',')
+            dest = parsed.get("dest")
+            src1 = parsed.get("src1")
+            src2 = parsed.get("src2")
 
-            # Validate src1 and src2 before accessing registers
-            if src1 not in self.registers:
-                raise KeyError(f"Invalid src1: {src1}. Available registers: {list(self.registers.keys())}")
-            if src2 not in self.registers:
-                raise KeyError(f"Invalid src2: {src2}. Available registers: {list(self.registers.keys())}")
-
-            # Log parsed instruction details for debugging
             self.log(f"Allocating RS for instruction: {instruction_text}, dest={dest}, src1={src1}, src2={src2}")
 
             for rs in self.reservation_stations:
                 if not rs["busy"]:
-                    # populate parsed fields
-                    # set reservation station fields; set exec_time but don't start until operands ready
                     rs.update({
                         "busy": True,
                         "instruction": instruction_text,
@@ -146,7 +202,6 @@ class Tomasulo:
 
                     # src1 readiness and source mapping
                     if self.registers.get(src1, {}).get("busy"):
-                        # producer RS is stored in register.rename (if present)
                         producer = self.registers[src1].get("rename")
                         rs["src1_source"] = producer if producer else src1
                         rs["src1_value"] = None
@@ -176,11 +231,10 @@ class Tomasulo:
                         instruction["issued"] = True
                         instruction["issue_cycle"] = self.clock
                     return True
+
         elif op in ["LOAD", "STORE"]:
             for rs in self.reservation_stations:
                 if not rs["busy"]:
-                    # For LOAD: parts = [LOAD, dest, address]
-                    # For STORE: parts = [STORE, address, src]
                     rs.update({
                         "busy": True,
                         "instruction": instruction_text,
@@ -189,14 +243,16 @@ class Tomasulo:
                         "time_left": durations.get(op, 1),
                         "started": False,
                         "result": None,
+                        "write_pending": False,
+                        "write_ready_cycle": None,
                     })
                     if op == "LOAD":
-                        dest = parts[1]
-                        addr = parts[2].strip(',')
+                        dest = parsed.get("dest")
+                        addr = parsed.get("addr")
                         rs["dest"] = dest
                         rs["addr"] = addr
                         rs["src1_source"] = "Imm/Addr"
-                        rs["src1_value"] = int(addr)
+                        rs["src1_value"] = addr
                         rs["src1_ready"] = True
                         rs["src2_source"] = "N/A"
                         rs["src2_value"] = None
@@ -205,8 +261,8 @@ class Tomasulo:
                             self.registers[dest]["busy"] = True
                             self.registers[dest]["rename"] = rs["name"]
                     else:  # STORE
-                        addr = parts[1]
-                        src = parts[2]
+                        addr = parsed.get("addr")
+                        src = parsed.get("src")
                         rs["addr"] = addr
                         rs["src1"] = src
                         # src operand readiness for STORE
@@ -222,6 +278,10 @@ class Tomasulo:
                         rs["src2_source"] = "N/A"
                         rs["src2_value"] = None
                         rs["src2_ready"] = True
+                    # if caller passed an instruction entry dict, mark it issued
+                    if isinstance(instruction, dict):
+                        instruction["issued"] = True
+                        instruction["issue_cycle"] = self.clock
                     return True
         return False
 

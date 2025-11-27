@@ -2,6 +2,7 @@ import sys
 from PyQt5.QtWidgets import QApplication, QMainWindow, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget, QPushButton, QMessageBox, QLabel, QHBoxLayout, QFileDialog
 from PyQt5.QtGui import QColor
 from tomasulo import Tomasulo
+from PyQt5.QtWidgets import QPlainTextEdit
 
 class TomasuloUI(QMainWindow):
     def __init__(self):
@@ -21,8 +22,9 @@ class TomasuloUI(QMainWindow):
 
         # Instruction status table
         self.instruction_table = QTableWidget()
-        self.instruction_table.setColumnCount(7)
-        self.instruction_table.setHorizontalHeaderLabels(["Op", "Dest", "j", "k", "Issue", "Exec Comp", "Write Result"])
+        # Columns: Op, Dest, j, k, Issue, Exec Start, Exec Comp, Write Result
+        self.instruction_table.setColumnCount(8)
+        self.instruction_table.setHorizontalHeaderLabels(["Op", "Dest", "j", "k", "Issue", "Exec Start", "Exec Comp", "Write Result"])
         self.layout.addWidget(self.instruction_table)
 
         # Reservation station table
@@ -68,9 +70,22 @@ class TomasuloUI(QMainWindow):
         # Debug checkbox
         from PyQt5.QtWidgets import QCheckBox
         self.debug_checkbox = QCheckBox("Debug")
-        self.debug_checkbox.setChecked(True)
+        # match simulator default (debug False)
+        self.debug_checkbox.setChecked(False)
+        # ensure simulator debug flag matches checkbox initial state
+        self.tomasulo.debug = False
         self.debug_checkbox.stateChanged.connect(self.toggle_debug)
         self.layout.addWidget(self.debug_checkbox)
+
+        # Log view (hidden by default)
+        self.log_view = QPlainTextEdit()
+        self.log_view.setReadOnly(True)
+        self.log_view.setFixedHeight(180)
+        self.log_view.hide()
+        self.layout.addWidget(self.log_view)
+
+        # Track how many log lines we've shown
+        self._log_index = 0
 
         # Ensure tables are updated
         self.update_tables()
@@ -92,14 +107,16 @@ class TomasuloUI(QMainWindow):
             self.instruction_table.setItem(i, 2, QTableWidgetItem(parts[2] if len(parts) > 2 else ""))
             self.instruction_table.setItem(i, 3, QTableWidgetItem(parts[3] if len(parts) > 3 else ""))
 
-            # Issue / Exec Comp / Write Result from entry fields
-            issue_status = "✓" if entry.get("issue_cycle") is not None else ""
-            exec_comp_status = "✓" if entry.get("exec_complete") is not None else ""
-            write_result_status = "✓" if entry.get("write_cycle") is not None else ""
+            # Issue / Exec Start / Exec Comp / Write Result from entry fields (show cycle numbers if available)
+            issue_status = str(entry.get("issue_cycle")) if entry.get("issue_cycle") is not None else ""
+            exec_start_status = str(entry.get("exec_start_cycle")) if entry.get("exec_start_cycle") is not None else ""
+            exec_comp_status = str(entry.get("exec_complete")) if entry.get("exec_complete") is not None else ""
+            write_result_status = str(entry.get("write_cycle")) if entry.get("write_cycle") is not None else ""
 
             self.instruction_table.setItem(i, 4, QTableWidgetItem(issue_status))
-            self.instruction_table.setItem(i, 5, QTableWidgetItem(exec_comp_status))
-            self.instruction_table.setItem(i, 6, QTableWidgetItem(write_result_status))
+            self.instruction_table.setItem(i, 5, QTableWidgetItem(exec_start_status))
+            self.instruction_table.setItem(i, 6, QTableWidgetItem(exec_comp_status))
+            self.instruction_table.setItem(i, 7, QTableWidgetItem(write_result_status))
 
         # Update reservation station table
         self.reservation_table.setRowCount(len(state["reservation_stations"]))
@@ -136,6 +153,16 @@ class TomasuloUI(QMainWindow):
         """Advance the simulation by one clock cycle."""
         self.tomasulo.step()
         self.update_tables()
+
+        # If debug is enabled, pull new logs and append to the log view
+        if self.tomasulo.debug:
+            new_logs = self.tomasulo.get_logs(self._log_index)
+            for line in new_logs:
+                self.log_view.appendPlainText(line)
+            self._log_index += len(new_logs)
+            # ensure visible and scrolled to bottom
+            self.log_view.show()
+            self.log_view.verticalScrollBar().setValue(self.log_view.verticalScrollBar().maximum())
 
         # Get the completed operations and their effects
         completed_operations = self.tomasulo.get_completed_operations()
@@ -180,7 +207,19 @@ class TomasuloUI(QMainWindow):
 
     def toggle_debug(self, state):
         """Toggle debug logging in the simulator."""
-        self.tomasulo.debug = bool(state)
+        enabled = bool(state)
+        self.tomasulo.debug = enabled
+        # show or hide the log view
+        if enabled:
+            # populate existing logs
+            logs = self.tomasulo.get_logs(0)
+            self.log_view.clear()
+            for line in logs:
+                self.log_view.appendPlainText(line)
+            self._log_index = len(logs)
+            self.log_view.show()
+        else:
+            self.log_view.hide()
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)

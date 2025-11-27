@@ -29,12 +29,25 @@ class Tomasulo:
         self.completed_operations = []  # Track completed operations
         # Cumulative count of instructions that have finished (write-back done)
         self.completed_total = 0
-        # debug flag controls printing
-        self.debug = True
+        # debug flag controls printing (default off for tests)
+        self.debug = False
+        # internal log buffer for UI
+        self.log_lines = []
 
     def log(self, *args, **kwargs):
+        # always append to internal log buffer
+        try:
+            msg = " ".join(str(a) for a in args)
+        except Exception:
+            msg = str(args)
+        self.log_lines.append(msg)
+        # print to stdout only when debug enabled
         if self.debug:
-            print(*args, **kwargs)
+            print(msg, **kwargs)
+
+    def get_logs(self, since=0):
+        """Return log lines starting from index `since`."""
+        return self.log_lines[since:]
 
     def reset(self):
         """Reset simulation state (clear RS, registers, counters)."""
@@ -68,6 +81,7 @@ class Tomasulo:
             "text": instruction,
             "issued": False,
             "issue_cycle": None,
+            "exec_start_cycle": None,
             "exec_complete": None,
             "write_cycle": None,
         }
@@ -124,6 +138,10 @@ class Tomasulo:
                         "time_left": durations.get(op, 1),
                         "started": False,
                         "result": None,
+                        "write_pending": False,
+                        "write_ready_cycle": None,
+                        "src1_ready": False,
+                        "src2_ready": False,
                     })
 
                     # src1 readiness and source mapping
@@ -258,20 +276,19 @@ class Tomasulo:
                 rs["started"] = True
                 # set time_left to exec_time (already set at allocation)
                 rs["time_left"] = rs.get("exec_time", 1)
-                # record instruction issue/exec start into instruction_queue entry if present
-                # find instruction entry that matches this RS instruction text
+                # record instruction exec start into instruction_queue entry if present
                 instr_text = rs.get("instruction")
                 for entry in self.instruction_queue:
-                    if entry["text"] == instr_text and entry["issue_cycle"] is None:
-                        entry["issue_cycle"] = self.clock
+                    if entry["text"] == instr_text and entry.get("exec_start_cycle") is None:
+                        entry["exec_start_cycle"] = self.clock
                         break
 
             # decrement if started
             if rs.get("started"):
                 rs["time_left"] = max(rs.get("time_left", 1) - 1, 0)
 
-            # if finished executing, perform writeback
-            if rs.get("started") and rs.get("time_left", 1) == 0:
+            # if finished executing (time_left == 0) and not yet pending writeback, compute result and mark exec complete
+            if rs.get("started") and rs.get("time_left", 1) == 0 and not rs.get("write_pending"):
                 instr_text = rs.get("instruction")
                 op = rs.get("op")
                 # compute using operand values saved in RS when possible
@@ -292,16 +309,40 @@ class Tomasulo:
                 elif op == "STORE":
                     addr = int(str(rs.get("addr")).strip(','))
                     val = rs.get("src1_value") if rs.get("src1_value") is not None else self.registers.get(rs.get("src1"), {}).get("value", 0)
-                    self.memory[addr] = val
-                    rs["result"] = None
+                    # For STORE, defer memory write until actual writeback
+                    rs["result"] = val
 
-                # capture writeback info
+                # mark exec complete on this cycle and schedule writeback in next cycle
+                for entry in self.instruction_queue:
+                    if entry["text"] == instr_text and entry.get("exec_complete") is None:
+                        entry["exec_complete"] = self.clock
+                        break
+
+                rs["write_pending"] = True
+                rs["write_ready_cycle"] = self.clock + 1
+                # execution finished; clear started flag
+                rs["started"] = False
+                # continue to next RS (writeback will happen when ready)
+                continue
+
+            # handle pending writebacks scheduled for this cycle
+            if rs.get("write_pending") and rs.get("write_ready_cycle", 0) <= self.clock:
+                instr_text = rs.get("instruction")
                 dest = rs.get("dest")
                 result_val = rs.get("result")
 
-                # writeback to register file if applicable
-                if dest in self.registers and result_val is not None:
-                    self.registers[dest].update({"value": result_val, "busy": False, "rename": None})
+                # perform actual writeback: registers or memory
+                if rs.get("op") == "STORE":
+                    # STORE writes memory now
+                    try:
+                        addr = int(str(rs.get("addr")).strip(','))
+                    except Exception:
+                        addr = 0
+                    if result_val is not None:
+                        self.memory[addr] = result_val
+                else:
+                    if dest in self.registers and result_val is not None:
+                        self.registers[dest].update({"value": result_val, "busy": False, "rename": None})
 
                 # Broadcast result to other reservation stations waiting on this RS
                 producer = rs.get("name")
@@ -317,11 +358,9 @@ class Tomasulo:
                         other["src2_ready"] = True
                         other["src2_source"] = "Reg"
 
-                # record instruction exec completion / write cycle
+                # record write cycle into instruction entry
                 for entry in self.instruction_queue:
-                    if entry["text"] == instr_text and entry["exec_complete"] is None:
-                        entry["exec_complete"] = self.clock
-                        # Assume write happens same cycle for now (could be +1)
+                    if entry["text"] == instr_text and entry.get("write_cycle") is None:
                         entry["write_cycle"] = self.clock
                         break
 
@@ -329,7 +368,8 @@ class Tomasulo:
                 self.completed_operations.append(f"{instr_text} -> {dest} = {result_val}")
                 self.completed_total += 1
                 self.log(f"Total completed instructions: {self.completed_total}")
-                # now clear the reservation station
+
+                # clear the reservation station
                 rs.update({
                     "busy": False,
                     "instruction": None,
@@ -345,6 +385,8 @@ class Tomasulo:
                     "started": False,
                     "exec_time": None,
                     "result": None,
+                    "write_pending": False,
+                    "write_ready_cycle": None,
                 })
                 
 

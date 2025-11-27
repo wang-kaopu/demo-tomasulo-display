@@ -28,6 +28,19 @@
 python main.py
 ```
 
+## 运行测试
+项目的单元测试已合并为 `test_all.py`，运行方式：
+
+```powershell
+# 在项目根目录下运行单个合并测试文件
+python -m unittest test_all.py -v
+
+# 或使用 discover 自动发现（会运行所有以 test_*.py 命名的测试文件）
+python -m unittest discover -v
+```
+
+如果你想仅查看某个测试类或用例的输出，可以使用 `-k` 或运行单个文件路径。
+
 ### 加载指令
 1. 点击“Load Instructions”按钮。
 2. 选择一个包含指令的文本文件（每行一条指令）。

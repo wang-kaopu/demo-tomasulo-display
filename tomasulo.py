@@ -19,33 +19,110 @@ class Tomasulo:
             }
             for i in range(5)
         ]
-        self.registers = {f"R{i}": {"value": 0, "busy": False} for i in range(8)}
+        # Initialize registers with floating-point names (F1 to F32)
+        self.registers = {f"F{i}": {"value": 0, "busy": False, "rename": None} for i in range(1, 33)}
+        # instruction_queue holds dicts: {text, issued, issue_cycle, exec_complete, write_cycle}
         self.instruction_queue = []
+        # (instruction entries track their own `issued` flag)
         self.clock = 0
         self.memory = {i: 0 for i in range(256)}  # Simulated memory
         self.completed_operations = []  # Track completed operations
+        # Cumulative count of instructions that have finished (write-back done)
+        self.completed_total = 0
+        # debug flag controls printing
+        self.debug = True
+
+    def log(self, *args, **kwargs):
+        if self.debug:
+            print(*args, **kwargs)
+
+    def reset(self):
+        """Reset simulation state (clear RS, registers, counters)."""
+        for i, rs in enumerate(self.reservation_stations):
+            self.reservation_stations[i] = {
+                "name": rs["name"],
+                "busy": False,
+                "instruction": None,
+                "op": None,
+                "dest": None,
+                "src1": None,
+                "src2": None,
+                "src1_source": None,
+                "src2_source": None,
+                "src1_value": None,
+                "src2_value": None,
+                "time_left": 0,
+            }
+        # reset registers
+        for reg in list(self.registers.keys()):
+            self.registers[reg].update({"value": 0, "busy": False, "rename": None})
+        # clear instruction queue and counters
+        self.instruction_queue = []
+        self.completed_operations = []
+        self.completed_total = 0
+        self.clock = 0
 
     def add_instruction(self, instruction):
-        """Add an instruction to the queue."""
-        self.instruction_queue.append(instruction)
+        """Add an instruction (text) to the queue as a state dict."""
+        entry = {
+            "text": instruction,
+            "issued": False,
+            "issue_cycle": None,
+            "exec_complete": None,
+            "write_cycle": None,
+        }
+        self.instruction_queue.append(entry)
+        # entry contains its own `issued` flag
 
     def allocate_reservation_station(self, instruction):
         """Allocate a reservation station for the instruction."""
-        parts = instruction.split()
+        # Accept either instruction text or an instruction entry dict
+        if isinstance(instruction, dict):
+            instruction_text = instruction["text"]
+        else:
+            instruction_text = instruction
+
+        # Clean up all parts after splitting the instruction
+        parts = [part.strip(',') for part in instruction_text.split()]
         op = parts[0]
-        if op in ["ADD", "SUB"]:
+        # execution durations per op (cycles)
+        durations = {
+            "ADD": 2,
+            "SUB": 2,
+            "MUL": 10,
+            "DIV": 20,
+            "LOAD": 2,
+            "STORE": 2,
+        }
+        if op in ["ADD", "SUB", "MUL", "DIV"]:
             _, dest, src1, src2 = parts
+            # Clean up src1 and src2 to remove extra characters
+            src1 = src1.strip(',')
+            src2 = src2.strip(',')
+
+            # Validate src1 and src2 before accessing registers
+            if src1 not in self.registers:
+                raise KeyError(f"Invalid src1: {src1}. Available registers: {list(self.registers.keys())}")
+            if src2 not in self.registers:
+                raise KeyError(f"Invalid src2: {src2}. Available registers: {list(self.registers.keys())}")
+
+            # Log parsed instruction details for debugging
+            self.log(f"Allocating RS for instruction: {instruction_text}, dest={dest}, src1={src1}, src2={src2}")
+
             for rs in self.reservation_stations:
                 if not rs["busy"]:
                     # populate parsed fields
+                    # set reservation station fields; set exec_time but don't start until operands ready
                     rs.update({
                         "busy": True,
-                        "instruction": instruction,
+                        "instruction": instruction_text,
                         "op": op,
                         "dest": dest,
                         "src1": src1,
                         "src2": src2,
-                        "time_left": 3,
+                        "exec_time": durations.get(op, 1),
+                        "time_left": durations.get(op, 1),
+                        "started": False,
                         "result": None,
                     })
 
@@ -76,6 +153,10 @@ class Tomasulo:
                     if dest in self.registers:
                         self.registers[dest]["busy"] = True
                         self.registers[dest]["rename"] = rs["name"]
+                    # if caller passed an instruction entry dict, mark it issued
+                    if isinstance(instruction, dict):
+                        instruction["issued"] = True
+                        instruction["issue_cycle"] = self.clock
                     return True
         elif op in ["LOAD", "STORE"]:
             for rs in self.reservation_stations:
@@ -84,14 +165,16 @@ class Tomasulo:
                     # For STORE: parts = [STORE, address, src]
                     rs.update({
                         "busy": True,
-                        "instruction": instruction,
+                        "instruction": instruction_text,
                         "op": op,
-                        "time_left": 3,
+                        "exec_time": durations.get(op, 1),
+                        "time_left": durations.get(op, 1),
+                        "started": False,
                         "result": None,
                     })
                     if op == "LOAD":
                         dest = parts[1]
-                        addr = parts[2]
+                        addr = parts[2].strip(',')
                         rs["dest"] = dest
                         rs["addr"] = addr
                         rs["src1_source"] = "Imm/Addr"
@@ -135,6 +218,13 @@ class Tomasulo:
         elif op == "SUB":
             dest, src1, src2 = parts[1:]
             self.registers[dest]["value"] = self.registers[src1]["value"] - self.registers[src2]["value"]
+        elif op == "MUL":
+            dest, src1, src2 = parts[1:]
+            self.registers[dest]["value"] = self.registers[src1]["value"] * self.registers[src2]["value"]
+        elif op == "DIV":
+            dest, src1, src2 = parts[1:]
+            denom = self.registers[src2]["value"]
+            self.registers[dest]["value"] = (self.registers[src1]["value"] / denom) if denom != 0 else 0
         elif op == "LOAD":
             dest, address = parts[1:]
             self.registers[dest]["value"] = self.memory[int(address)]
@@ -148,85 +238,123 @@ class Tomasulo:
         self.completed_operations = []  # Reset completed operations for this cycle
 
         # Dispatch instructions from the instruction queue into free reservation stations
-        # Attempt to allocate as many as possible (front of queue first)
-        for instr in list(self.instruction_queue):
-            allocated = self.allocate_reservation_station(instr)
+        # Attempt to allocate as many as possible (front of queue first).
+        # We keep instructions in `instruction_queue` for UI display, so track issuance
+        # using `issued_flags` to avoid re-issuing the same instruction repeatedly.
+        # Ensure issued_flags length matches the queue
+        for entry in self.instruction_queue:
+            if entry.get("issued"):
+                continue
+            allocated = self.allocate_reservation_station(entry)
             if allocated:
-                try:
-                    self.instruction_queue.remove(instr)
-                except ValueError:
-                    pass
+                entry["issued"] = True
 
-        # Update reservation stations
+        # Update reservation stations: start execution when operands ready, decrement time_left when started
         for rs in self.reservation_stations:
-            if rs.get("busy") and rs.get("src1_ready") and rs.get("src2_ready"):
-                rs["time_left"] -= 1
-                if rs["time_left"] == 0:
-                    # Execute the instruction and store the result in the reservation station
-                    instr_text = rs.get("instruction")
-                    op = rs.get("op")
-                    # compute using operand values saved in RS when possible
-                    if op in ["ADD", "SUB"]:
-                        a = rs.get("src1_value") if rs.get("src1_value") is not None else self.registers.get(rs.get("src1"), {}).get("value", 0)
-                        b = rs.get("src2_value") if rs.get("src2_value") is not None else self.registers.get(rs.get("src2"), {}).get("value", 0)
-                        if op == "ADD":
-                            rs["result"] = a + b
-                        else:
-                            rs["result"] = a - b
-                    elif op == "LOAD":
-                        # src1_value stores the address (as int)
-                        addr = int(rs.get("src1_value") if rs.get("src1_value") is not None else rs.get("addr", 0))
-                        rs["result"] = self.memory.get(addr, 0)
-                    elif op == "STORE":
-                        # STORE writes memory at addr using src1_value
-                        addr = int(rs.get("addr"))
-                        val = rs.get("src1_value") if rs.get("src1_value") is not None else self.registers.get(rs.get("src1"), {}).get("value", 0)
-                        self.memory[addr] = val
-                        rs["result"] = None
+            if not rs.get("busy"):
+                continue
+            # if execution hasn't started but operands are ready, mark started
+            if not rs.get("started") and rs.get("src1_ready") and rs.get("src2_ready"):
+                rs["started"] = True
+                # set time_left to exec_time (already set at allocation)
+                rs["time_left"] = rs.get("exec_time", 1)
+                # record instruction issue/exec start into instruction_queue entry if present
+                # find instruction entry that matches this RS instruction text
+                instr_text = rs.get("instruction")
+                for entry in self.instruction_queue:
+                    if entry["text"] == instr_text and entry["issue_cycle"] is None:
+                        entry["issue_cycle"] = self.clock
+                        break
 
-                    # capture writeback info
-                    dest = rs.get("dest")
-                    result_val = rs.get("result")
+            # decrement if started
+            if rs.get("started"):
+                rs["time_left"] = max(rs.get("time_left", 1) - 1, 0)
 
-                    # writeback to register file if applicable
-                    if dest in self.registers and result_val is not None:
-                        self.registers[dest].update({"value": result_val, "busy": False, "rename": None})
+            # if finished executing, perform writeback
+            if rs.get("started") and rs.get("time_left", 1) == 0:
+                instr_text = rs.get("instruction")
+                op = rs.get("op")
+                # compute using operand values saved in RS when possible
+                if op in ["ADD", "SUB", "MUL", "DIV"]:
+                    a = rs.get("src1_value") if rs.get("src1_value") is not None else self.registers.get(rs.get("src1"), {}).get("value", 0)
+                    b = rs.get("src2_value") if rs.get("src2_value") is not None else self.registers.get(rs.get("src2"), {}).get("value", 0)
+                    if op == "ADD":
+                        rs["result"] = a + b
+                    elif op == "SUB":
+                        rs["result"] = a - b
+                    elif op == "MUL":
+                        rs["result"] = a * b
+                    elif op == "DIV":
+                        rs["result"] = (a / b) if b != 0 else 0
+                elif op == "LOAD":
+                    addr = int(rs.get("src1_value") if rs.get("src1_value") is not None else rs.get("addr", 0))
+                    rs["result"] = self.memory.get(addr, 0)
+                elif op == "STORE":
+                    addr = int(str(rs.get("addr")).strip(','))
+                    val = rs.get("src1_value") if rs.get("src1_value") is not None else self.registers.get(rs.get("src1"), {}).get("value", 0)
+                    self.memory[addr] = val
+                    rs["result"] = None
 
-                    # Broadcast result to other reservation stations waiting on this RS
-                    producer = rs.get("name")
-                    for other in self.reservation_stations:
-                        if other is rs or not other.get("busy"):
-                            continue
-                        # src1
-                        if other.get("src1_source") == producer:
-                            other["src1_value"] = result_val
-                            other["src1_ready"] = True
-                            other["src1_source"] = "Reg"
-                        # src2
-                        if other.get("src2_source") == producer:
-                            other["src2_value"] = result_val
-                            other["src2_ready"] = True
-                            other["src2_source"] = "Reg"
+                # capture writeback info
+                dest = rs.get("dest")
+                result_val = rs.get("result")
 
-                    # now clear the reservation station
-                    rs.update({
-                        "busy": False,
-                        "instruction": None,
-                        "op": None,
-                        "dest": None,
-                        "src1": None,
-                        "src2": None,
-                        "src1_source": None,
-                        "src2_source": None,
-                        "src1_value": None,
-                        "src2_value": None,
-                        "time_left": 0,
-                        "result": None,
-                    })
+                # writeback to register file if applicable
+                if dest in self.registers and result_val is not None:
+                    self.registers[dest].update({"value": result_val, "busy": False, "rename": None})
 
-                    # Log the completed operation (use captured values)
-                    if instr_text:
-                        self.completed_operations.append(f"{instr_text} -> {dest} = {result_val}")
+                # Broadcast result to other reservation stations waiting on this RS
+                producer = rs.get("name")
+                for other in self.reservation_stations:
+                    if other is rs or not other.get("busy"):
+                        continue
+                    if other.get("src1_source") == producer:
+                        other["src1_value"] = result_val
+                        other["src1_ready"] = True
+                        other["src1_source"] = "Reg"
+                    if other.get("src2_source") == producer:
+                        other["src2_value"] = result_val
+                        other["src2_ready"] = True
+                        other["src2_source"] = "Reg"
+
+                # record instruction exec completion / write cycle
+                for entry in self.instruction_queue:
+                    if entry["text"] == instr_text and entry["exec_complete"] is None:
+                        entry["exec_complete"] = self.clock
+                        # Assume write happens same cycle for now (could be +1)
+                        entry["write_cycle"] = self.clock
+                        break
+
+                # increment cumulative completed count and record completed operation
+                self.completed_operations.append(f"{instr_text} -> {dest} = {result_val}")
+                self.completed_total += 1
+                self.log(f"Total completed instructions: {self.completed_total}")
+                # now clear the reservation station
+                rs.update({
+                    "busy": False,
+                    "instruction": None,
+                    "op": None,
+                    "dest": None,
+                    "src1": None,
+                    "src2": None,
+                    "src1_source": None,
+                    "src2_source": None,
+                    "src1_value": None,
+                    "src2_value": None,
+                    "time_left": 0,
+                    "started": False,
+                    "exec_time": None,
+                    "result": None,
+                })
+                
+
+        # Check if all instructions are completed.
+        # Note: we intentionally keep `instruction_queue` contents for UI display,
+        # so termination must rely on how many instructions have been written back.
+        all_rs_idle = all(not rs.get("busy") for rs in self.reservation_stations)
+        if all_rs_idle and self.completed_total >= len(self.instruction_queue) and len(self.instruction_queue) > 0:
+            self.log("All instructions have been written back. Simulation stopping.")
+            return
 
     def get_completed_operations(self):
         """Return the list of completed operations for the current cycle."""
@@ -238,7 +366,7 @@ class Tomasulo:
             "clock": self.clock,
             "reservation_stations": self.reservation_stations,
             "registers": {
-                reg: {"value": data["value"], "rename": data.get("rename", None)}
+                reg: {"value": data["value"], "rename": data.get("rename", None), "busy": data.get("busy", False)}
                 for reg, data in self.registers.items()
             },
             "instruction_queue": self.instruction_queue,

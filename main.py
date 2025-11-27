@@ -21,8 +21,8 @@ class TomasuloUI(QMainWindow):
 
         # Instruction status table
         self.instruction_table = QTableWidget()
-        self.instruction_table.setColumnCount(5)
-        self.instruction_table.setHorizontalHeaderLabels(["Op", "Dest", "j", "k", "Status"])
+        self.instruction_table.setColumnCount(7)
+        self.instruction_table.setHorizontalHeaderLabels(["Op", "Dest", "j", "k", "Issue", "Exec Comp", "Write Result"])
         self.layout.addWidget(self.instruction_table)
 
         # Reservation station table
@@ -33,8 +33,21 @@ class TomasuloUI(QMainWindow):
 
         # Register result status table
         self.register_table = QTableWidget()
-        self.register_table.setColumnCount(32)  # Assuming 32 registers
-        self.register_table.setHorizontalHeaderLabels([f"F{i}" for i in range(32)])
+        self.register_table.setColumnCount(32)  # 32 registers F1..F32
+        self.register_table.setHorizontalHeaderLabels([f"F{i}" for i in range(1, 33)])
+        self.layout.addWidget(self.register_table)
+
+        # Add titles above each table
+        self.instruction_title = QLabel("指令状态")
+        self.layout.addWidget(self.instruction_title)
+        self.layout.addWidget(self.instruction_table)
+
+        self.reservation_title = QLabel("保留站")
+        self.layout.addWidget(self.reservation_title)
+        self.layout.addWidget(self.reservation_table)
+
+        self.register_title = QLabel("寄存器结果状态")
+        self.layout.addWidget(self.register_title)
         self.layout.addWidget(self.register_table)
 
         # Step button
@@ -47,6 +60,18 @@ class TomasuloUI(QMainWindow):
         self.load_button.clicked.connect(self.load_instructions)
         self.layout.addWidget(self.load_button)
 
+        # Reset button
+        self.reset_button = QPushButton("Reset")
+        self.reset_button.clicked.connect(self.reset_simulation)
+        self.layout.addWidget(self.reset_button)
+
+        # Debug checkbox
+        from PyQt5.QtWidgets import QCheckBox
+        self.debug_checkbox = QCheckBox("Debug")
+        self.debug_checkbox.setChecked(True)
+        self.debug_checkbox.stateChanged.connect(self.toggle_debug)
+        self.layout.addWidget(self.debug_checkbox)
+
         # Ensure tables are updated
         self.update_tables()
 
@@ -54,17 +79,27 @@ class TomasuloUI(QMainWindow):
         """Update all tables with the current state of Tomasulo."""
         state = self.tomasulo.get_state()
 
-        # Update instruction status table
-        self.instruction_table.setRowCount(len(state["instruction_queue"]))
-        for i, instr in enumerate(state["instruction_queue"]):
-            parts = instr.split()
+        # Update instruction status table (instruction entries are dicts)
+        instrs = state["instruction_queue"]
+        self.instruction_table.setRowCount(len(instrs))
+        for i, entry in enumerate(instrs):
+            text = entry.get("text", "")
+            parts = text.split()
             while len(parts) < 4:
-                parts.append("")  # Fill missing parts with empty strings
+                parts.append("")
             self.instruction_table.setItem(i, 0, QTableWidgetItem(parts[0]))
-            self.instruction_table.setItem(i, 1, QTableWidgetItem(parts[1]))
-            self.instruction_table.setItem(i, 2, QTableWidgetItem(parts[2]))
-            self.instruction_table.setItem(i, 3, QTableWidgetItem(parts[3]))
-            self.instruction_table.setItem(i, 4, QTableWidgetItem("Issued" if i < state["clock"] else "Pending"))
+            self.instruction_table.setItem(i, 1, QTableWidgetItem(parts[1] if len(parts) > 1 else ""))
+            self.instruction_table.setItem(i, 2, QTableWidgetItem(parts[2] if len(parts) > 2 else ""))
+            self.instruction_table.setItem(i, 3, QTableWidgetItem(parts[3] if len(parts) > 3 else ""))
+
+            # Issue / Exec Comp / Write Result from entry fields
+            issue_status = "✓" if entry.get("issue_cycle") is not None else ""
+            exec_comp_status = "✓" if entry.get("exec_complete") is not None else ""
+            write_result_status = "✓" if entry.get("write_cycle") is not None else ""
+
+            self.instruction_table.setItem(i, 4, QTableWidgetItem(issue_status))
+            self.instruction_table.setItem(i, 5, QTableWidgetItem(exec_comp_status))
+            self.instruction_table.setItem(i, 6, QTableWidgetItem(write_result_status))
 
         # Update reservation station table
         self.reservation_table.setRowCount(len(state["reservation_stations"]))
@@ -73,16 +108,29 @@ class TomasuloUI(QMainWindow):
             self.reservation_table.setItem(i, 1, QTableWidgetItem(rs.get("name", "")))
             self.reservation_table.setItem(i, 2, QTableWidgetItem(str(rs.get("busy", False))))
             self.reservation_table.setItem(i, 3, QTableWidgetItem(rs.get("op", "")))
-            self.reservation_table.setItem(i, 4, QTableWidgetItem(str(rs.get("vj", ""))))
-            self.reservation_table.setItem(i, 5, QTableWidgetItem(str(rs.get("vk", ""))))
-            self.reservation_table.setItem(i, 6, QTableWidgetItem(rs.get("qj", "")))
-            self.reservation_table.setItem(i, 7, QTableWidgetItem(rs.get("qk", "")))
+            # show operand values and source tags
+            self.reservation_table.setItem(i, 4, QTableWidgetItem(str(rs.get("src1_value", ""))))
+            self.reservation_table.setItem(i, 5, QTableWidgetItem(str(rs.get("src2_value", ""))))
+            self.reservation_table.setItem(i, 6, QTableWidgetItem(str(rs.get("src1_source", ""))))
+            self.reservation_table.setItem(i, 7, QTableWidgetItem(str(rs.get("src2_source", ""))))
 
         # Update register result status table
-        self.register_table.setRowCount(2)  # Two rows: Qi and Data
-        for i, reg in enumerate(state["registers"].values()):
-            self.register_table.setItem(0, i, QTableWidgetItem(reg.get("rename", "")))
-            self.register_table.setItem(1, i, QTableWidgetItem(str(reg.get("value", ""))))
+        self.register_table.setRowCount(3)  # Three rows: Qi, Data, and Status
+        for i, (reg_name, reg_data) in enumerate(state["registers"].items()):
+            self.register_table.setItem(0, i, QTableWidgetItem(reg_data.get("rename", "")))
+            self.register_table.setItem(1, i, QTableWidgetItem(str(reg_data.get("value", ""))))
+
+            # Determine the status of the register
+            if reg_data.get("busy", False):
+                status_text = "Busy"
+                color = QColor("yellow")
+            else:
+                status_text = "Free"
+                color = QColor("lightgreen")
+
+            status_item = QTableWidgetItem(status_text)
+            status_item.setBackground(color)
+            self.register_table.setItem(2, i, status_item)
 
     def step_simulation(self):
         """Advance the simulation by one clock cycle."""
@@ -116,9 +164,23 @@ class TomasuloUI(QMainWindow):
         file_path, _ = QFileDialog.getOpenFileName(self, "Open Instruction File", "", "Text Files (*.txt);;All Files (*)", options=options)
         if file_path:
             with open(file_path, "r") as file:
-                instructions = file.readlines()
-                self.tomasulo.instruction_queue = [instr.strip() for instr in instructions]
+                instructions = [instr.strip() for instr in file.readlines() if instr.strip()]
+                # reset internal state and load
+                self.tomasulo.instruction_queue = []
+                self.tomasulo.completed_operations = []
+                self.tomasulo.completed_total = 0
+                for instr in instructions:
+                    self.tomasulo.add_instruction(instr)
                 self.update_tables()
+
+    def reset_simulation(self):
+        """Reset the simulator state."""
+        self.tomasulo.reset()
+        self.update_tables()
+
+    def toggle_debug(self, state):
+        """Toggle debug logging in the simulator."""
+        self.tomasulo.debug = bool(state)
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)

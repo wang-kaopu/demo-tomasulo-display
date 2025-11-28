@@ -225,7 +225,8 @@ class Tomasulo:
                     # mark destination register as renamed/busy
                     if dest in self.registers:
                         self.registers[dest]["busy"] = True
-                        self.registers[dest]["rename"] = rs["name"]
+                        # store rename as standardized tag: "RS:<name>"
+                        self.registers[dest]["rename"] = f"RS:{rs['name']}"
                     # if caller passed an instruction entry dict, mark it issued
                     if isinstance(instruction, dict):
                         instruction["issued"] = True
@@ -251,7 +252,8 @@ class Tomasulo:
                         addr = parsed.get("addr")
                         rs["dest"] = dest
                         rs["addr"] = addr
-                        rs["src1_source"] = "Imm/Addr"
+                        # immediate/address source standardized tag
+                        rs["src1_source"] = "Imm"
                         rs["src1_value"] = addr
                         rs["src1_ready"] = True
                         rs["src2_source"] = "N/A"
@@ -259,7 +261,8 @@ class Tomasulo:
                         rs["src2_ready"] = True
                         if dest in self.registers:
                             self.registers[dest]["busy"] = True
-                            self.registers[dest]["rename"] = rs["name"]
+                            # store rename as standardized tag: "RS:<name>"
+                            self.registers[dest]["rename"] = f"RS:{rs['name']}"
                     else:  # STORE
                         addr = parsed.get("addr")
                         src = parsed.get("src")
@@ -405,15 +408,15 @@ class Tomasulo:
                         self.registers[dest].update({"value": result_val, "busy": False, "rename": None})
 
                 # Broadcast result to other reservation stations waiting on this RS
-                producer = rs.get("name")
+                producer_tag = f"RS:{rs.get('name')}"
                 for other in self.reservation_stations:
                     if other is rs or not other.get("busy"):
                         continue
-                    if other.get("src1_source") == producer:
+                    if other.get("src1_source") == producer_tag:
                         other["src1_value"] = result_val
                         other["src1_ready"] = True
                         other["src1_source"] = "Reg"
-                    if other.get("src2_source") == producer:
+                    if other.get("src2_source") == producer_tag:
                         other["src2_value"] = result_val
                         other["src2_ready"] = True
                         other["src2_source"] = "Reg"

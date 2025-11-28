@@ -37,6 +37,9 @@ class TomasuloUI(QMainWindow):
         self.register_table = QTableWidget()
         self.register_table.setColumnCount(32)  # 32 registers F1..F32
         self.register_table.setHorizontalHeaderLabels([f"F{i}" for i in range(1, 33)])
+        # Three logical rows: Qi (producer RS), Value (register content), Status (Busy/Free)
+        self.register_table.setRowCount(3)
+        self.register_table.setVerticalHeaderLabels(["Qi", "Value", "Status"])
         self.layout.addWidget(self.register_table)
 
         # Add titles above each table
@@ -132,10 +135,17 @@ class TomasuloUI(QMainWindow):
             self.reservation_table.setItem(i, 7, QTableWidgetItem(str(rs.get("src2_source", ""))))
 
         # Update register result status table
-        self.register_table.setRowCount(3)  # Three rows: Qi, Data, and Status
+        # (Row 0: Qi (producer RS tag), Row 1: Value (register numeric content), Row 2: Status)
         for i, (reg_name, reg_data) in enumerate(state["registers"].items()):
+            # Qi: which RS will produce this register (e.g. "RS:RS0") or empty
             self.register_table.setItem(0, i, QTableWidgetItem(reg_data.get("rename", "")))
-            self.register_table.setItem(1, i, QTableWidgetItem(str(reg_data.get("value", ""))))
+            # Value: current numeric value (format as int if whole number, else float)
+            val = reg_data.get("value", "")
+            if isinstance(val, float) and val.is_integer():
+                val_str = str(int(val))
+            else:
+                val_str = str(val)
+            self.register_table.setItem(1, i, QTableWidgetItem(val_str))
 
             # Determine the status of the register
             if reg_data.get("busy", False):

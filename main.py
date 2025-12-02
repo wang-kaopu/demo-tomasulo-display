@@ -1,5 +1,6 @@
 import sys
-from PyQt5.QtWidgets import QApplication, QMainWindow, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget, QPushButton, QMessageBox, QLabel, QHBoxLayout, QFileDialog
+import copy
+from PyQt5.QtWidgets import QApplication, QMainWindow, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget, QPushButton, QMessageBox, QLabel, QHBoxLayout, QFileDialog, QHeaderView, QSizePolicy
 from PyQt5.QtGui import QColor
 from tomasulo import Tomasulo
 from PyQt5.QtWidgets import QPlainTextEdit
@@ -25,12 +26,19 @@ class TomasuloUI(QMainWindow):
         # Columns: Op, Dest, j, k, Issue, Exec Start, Exec Comp, Write Result
         self.instruction_table.setColumnCount(8)
         self.instruction_table.setHorizontalHeaderLabels(["Op", "Dest", "j", "k", "Issue", "Exec Start", "Exec Comp", "Write Result"])
+        # increase vertical space for instruction table and stretch columns
+        self.instruction_table.setMinimumHeight(300)
+        self.instruction_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         self.layout.addWidget(self.instruction_table)
 
         # Reservation station table
         self.reservation_table = QTableWidget()
         self.reservation_table.setColumnCount(8)
         self.reservation_table.setHorizontalHeaderLabels(["Time", "Name", "Busy", "Op", "Vj", "Vk", "Qj", "Qk"])
+        # make reservation table adapt to window width/height
+        self.reservation_table.setMinimumHeight(180)
+        self.reservation_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self.reservation_table.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.layout.addWidget(self.reservation_table)
 
         # Register result status table
@@ -40,6 +48,10 @@ class TomasuloUI(QMainWindow):
         # Three logical rows: Qi (producer RS), Value (register content), Status (Busy/Free)
         self.register_table.setRowCount(3)
         self.register_table.setVerticalHeaderLabels(["Qi", "Value", "Status"])
+        # make register table adapt to window width; many columns — allow stretch
+        self.register_table.setMinimumHeight(140)
+        self.register_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self.register_table.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
         self.layout.addWidget(self.register_table)
 
         # Add titles above each table
@@ -56,17 +68,17 @@ class TomasuloUI(QMainWindow):
         self.layout.addWidget(self.register_table)
 
         # Step button
-        self.step_button = QPushButton("Step")
+        self.step_button = QPushButton("步进")
         self.step_button.clicked.connect(self.step_simulation)
         self.layout.addWidget(self.step_button)
 
         # Load Instructions button
-        self.load_button = QPushButton("Load Instructions")
+        self.load_button = QPushButton("从文件加载指令")
         self.load_button.clicked.connect(self.load_instructions)
         self.layout.addWidget(self.load_button)
 
         # Reset button
-        self.reset_button = QPushButton("Reset")
+        self.reset_button = QPushButton("重置")
         self.reset_button.clicked.connect(self.reset_simulation)
         self.layout.addWidget(self.reset_button)
 
@@ -91,73 +103,164 @@ class TomasuloUI(QMainWindow):
         self._log_index = 0
 
         # Ensure tables are updated
+        # previous state snapshot for change-highlighting
+        self._prev_state = None
         self.update_tables()
 
     def update_tables(self):
         """Update all tables with the current state of Tomasulo."""
         state = self.tomasulo.get_state()
 
-        # Update instruction status table (instruction entries are dicts)
-        instrs = state["instruction_queue"]
+        # clear previous highlights
+        def _clear_table_highlights(table):
+            for r in range(table.rowCount()):
+                for c in range(table.columnCount()):
+                    item = table.item(r, c)
+                    if item:
+                        item.setBackground(QColor("white"))
+
+        _clear_table_highlights(self.instruction_table)
+        _clear_table_highlights(self.reservation_table)
+        _clear_table_highlights(self.register_table)
+
+        # --- Instruction table ---
+        instrs = state.get("instruction_queue", [])
         self.instruction_table.setRowCount(len(instrs))
-        for i, entry in enumerate(instrs):
+        for row, entry in enumerate(instrs):
             text = entry.get("text", "")
             parts = text.split()
-            while len(parts) < 4:
-                parts.append("")
-            self.instruction_table.setItem(i, 0, QTableWidgetItem(parts[0]))
-            self.instruction_table.setItem(i, 1, QTableWidgetItem(parts[1] if len(parts) > 1 else ""))
-            self.instruction_table.setItem(i, 2, QTableWidgetItem(parts[2] if len(parts) > 2 else ""))
-            self.instruction_table.setItem(i, 3, QTableWidgetItem(parts[3] if len(parts) > 3 else ""))
 
-            # Issue / Exec Start / Exec Comp / Write Result from entry fields (show cycle numbers if available)
+            # helper to set and highlight a cell against previous state
+            def _set_and_highlight(table, r, c, new_text, prev_val=None):
+                item = QTableWidgetItem(new_text)
+                changed = False
+                if self._prev_state is not None:
+                    try:
+                        if prev_val is None:
+                            prev_instrs = self._prev_state.get("instruction_queue", [])
+                            prev_entry = prev_instrs[r] if r < len(prev_instrs) else None
+                            if prev_entry is None:
+                                changed = True
+                            else:
+                                # compare by field
+                                if c == 0:
+                                    prev_v = prev_entry.get("text", "").split()[0] if prev_entry.get("text") else ""
+                                elif c == 1:
+                                    prev_v = prev_entry.get("text", "").split()[1] if len(prev_entry.get("text", "").split())>1 else ""
+                                elif c == 2:
+                                    prev_v = prev_entry.get("text", "").split()[2] if len(prev_entry.get("text", "").split())>2 else ""
+                                elif c == 3:
+                                    prev_v = prev_entry.get("text", "").split()[3] if len(prev_entry.get("text", "").split())>3 else ""
+                                elif c == 4:
+                                    prev_v = str(prev_entry.get("issue_cycle")) if prev_entry.get("issue_cycle") is not None else ""
+                                elif c == 5:
+                                    prev_v = str(prev_entry.get("exec_start_cycle")) if prev_entry.get("exec_start_cycle") is not None else ""
+                                elif c == 6:
+                                    prev_v = str(prev_entry.get("exec_complete")) if prev_entry.get("exec_complete") is not None else ""
+                                elif c == 7:
+                                    prev_v = str(prev_entry.get("write_cycle")) if prev_entry.get("write_cycle") is not None else ""
+                                else:
+                                    prev_v = ""
+                                changed = (str(prev_v) != str(new_text))
+                        else:
+                            changed = (str(prev_val) != str(new_text))
+                    except Exception:
+                        changed = True
+                if changed:
+                    item.setBackground(QColor("lightyellow"))
+                table.setItem(r, c, item)
+
+            _set_and_highlight(self.instruction_table, row, 0, parts[0] if len(parts)>0 else "")
+            _set_and_highlight(self.instruction_table, row, 1, parts[1] if len(parts)>1 else "")
+            _set_and_highlight(self.instruction_table, row, 2, parts[2] if len(parts)>2 else "")
+            _set_and_highlight(self.instruction_table, row, 3, parts[3] if len(parts)>3 else "")
+
             issue_status = str(entry.get("issue_cycle")) if entry.get("issue_cycle") is not None else ""
             exec_start_status = str(entry.get("exec_start_cycle")) if entry.get("exec_start_cycle") is not None else ""
             exec_comp_status = str(entry.get("exec_complete")) if entry.get("exec_complete") is not None else ""
             write_result_status = str(entry.get("write_cycle")) if entry.get("write_cycle") is not None else ""
 
-            self.instruction_table.setItem(i, 4, QTableWidgetItem(issue_status))
-            self.instruction_table.setItem(i, 5, QTableWidgetItem(exec_start_status))
-            self.instruction_table.setItem(i, 6, QTableWidgetItem(exec_comp_status))
-            self.instruction_table.setItem(i, 7, QTableWidgetItem(write_result_status))
+            _set_and_highlight(self.instruction_table, row, 4, issue_status)
+            _set_and_highlight(self.instruction_table, row, 5, exec_start_status)
+            _set_and_highlight(self.instruction_table, row, 6, exec_comp_status)
+            _set_and_highlight(self.instruction_table, row, 7, write_result_status)
 
-        # Update reservation station table
-        self.reservation_table.setRowCount(len(state["reservation_stations"]))
-        for i, rs in enumerate(state["reservation_stations"]):
-            self.reservation_table.setItem(i, 0, QTableWidgetItem(str(rs.get("time_left", ""))))
-            self.reservation_table.setItem(i, 1, QTableWidgetItem(rs.get("name", "")))
-            self.reservation_table.setItem(i, 2, QTableWidgetItem(str(rs.get("busy", False))))
-            self.reservation_table.setItem(i, 3, QTableWidgetItem(rs.get("op", "")))
-            # show operand values and source tags
-            self.reservation_table.setItem(i, 4, QTableWidgetItem(str(rs.get("src1_value", ""))))
-            self.reservation_table.setItem(i, 5, QTableWidgetItem(str(rs.get("src2_value", ""))))
-            self.reservation_table.setItem(i, 6, QTableWidgetItem(str(rs.get("src1_source", ""))))
-            self.reservation_table.setItem(i, 7, QTableWidgetItem(str(rs.get("src2_source", ""))))
+        # --- Reservation station table ---
+        rs_list = state.get("reservation_stations", [])
+        self.reservation_table.setRowCount(len(rs_list))
+        for r, rs in enumerate(rs_list):
+            vals = [
+                str(rs.get("time_left", "")),
+                rs.get("name", ""),
+                str(rs.get("busy", False)),
+                rs.get("op", ""),
+                str(rs.get("src1_value", "")),
+                str(rs.get("src2_value", "")),
+                str(rs.get("src1_source", "")),
+                str(rs.get("src2_source", "")),
+            ]
+            for c, v in enumerate(vals):
+                item = QTableWidgetItem(v)
+                changed = False
+                if self._prev_state is not None:
+                    try:
+                        prev_rs = self._prev_state.get("reservation_stations", [])[r]
+                        key_map = {0: 'time_left', 1: 'name', 2: 'busy', 3: 'op', 4: 'src1_value', 5: 'src2_value', 6: 'src1_source', 7: 'src2_source'}
+                        prev_key = key_map.get(c)
+                        prev_val = str(prev_rs.get(prev_key, ""))
+                        changed = (prev_val != v)
+                    except Exception:
+                        changed = True
+                if changed:
+                    item.setBackground(QColor("lightyellow"))
+                self.reservation_table.setItem(r, c, item)
 
-        # Update register result status table
-        # (Row 0: Qi (producer RS tag), Row 1: Value (register numeric content), Row 2: Status)
-        for i, (reg_name, reg_data) in enumerate(state["registers"].items()):
-            # Qi: which RS will produce this register (e.g. "RS:RS0") or empty
-            self.register_table.setItem(0, i, QTableWidgetItem(reg_data.get("rename", "")))
-            # Value: current numeric value (format as int if whole number, else float)
+        # --- Register table ---
+        regs = state.get("registers", {})
+        # set Qi row, Value row, Status row
+        for col, reg_name in enumerate(sorted(regs.keys(), key=lambda x: int(x[1:]))):
+            reg_data = regs[reg_name]
+            # Qi
+            qi_item = QTableWidgetItem(reg_data.get("rename", "") or "")
+            # Value
             val = reg_data.get("value", "")
             if isinstance(val, float) and val.is_integer():
                 val_str = str(int(val))
             else:
                 val_str = str(val)
-            self.register_table.setItem(1, i, QTableWidgetItem(val_str))
-
-            # Determine the status of the register
+            val_item = QTableWidgetItem(val_str)
+            # Status
             if reg_data.get("busy", False):
-                status_text = "Busy"
-                color = QColor("yellow")
+                status_item = QTableWidgetItem("Busy")
+                status_item.setBackground(QColor("yellow"))
             else:
-                status_text = "Free"
-                color = QColor("lightgreen")
+                status_item = QTableWidgetItem("Free")
+                status_item.setBackground(QColor("lightgreen"))
 
-            status_item = QTableWidgetItem(status_text)
-            status_item.setBackground(color)
-            self.register_table.setItem(2, i, status_item)
+            # highlight compares with prev_state
+            if self._prev_state is not None:
+                try:
+                    prev_reg = self._prev_state.get("registers", {}).get(reg_name, {})
+                    if prev_reg.get("rename", None) != reg_data.get("rename", None):
+                        qi_item.setBackground(QColor("lightyellow"))
+                    if str(prev_reg.get("value", "")) != val_str:
+                        val_item.setBackground(QColor("lightyellow"))
+                    if bool(prev_reg.get("busy", False)) != bool(reg_data.get("busy", False)):
+                        status_item.setBackground(QColor("lightyellow"))
+                except Exception:
+                    pass
+
+            self.register_table.setItem(0, col, qi_item)
+            self.register_table.setItem(1, col, val_item)
+            self.register_table.setItem(2, col, status_item)
+
+        # Save snapshot for next-step comparison
+        try:
+            self._prev_state = copy.deepcopy(state)
+        except Exception:
+            self._prev_state = state
+
+        # (Note: reservation and register tables are updated above with highlighting.)
 
     def step_simulation(self):
         """Advance the simulation by one clock cycle."""
@@ -174,11 +277,11 @@ class TomasuloUI(QMainWindow):
             self.log_view.show()
             self.log_view.verticalScrollBar().setValue(self.log_view.verticalScrollBar().maximum())
 
-        # Get the completed operations and their effects
+        # 获取本周期完成的操作并显示
         completed_operations = self.tomasulo.get_completed_operations()
         if completed_operations:
             details = "\n".join(completed_operations)
-            QMessageBox.information(self, "Cycle Summary", f"Completed Operations:\n{details}")
+            QMessageBox.information(self, "周期汇总", f"已完成指令:\n{details}")
 
     def show_details(self, row, column):
         """Show details of the selected reservation station."""

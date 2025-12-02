@@ -27,6 +27,16 @@ class Tomasulo:
         self.clock = 0
         self.memory = {i: 0 for i in range(256)}  # Simulated memory
         self.completed_operations = []  # Track completed operations
+        # Operation latencies (in cycles) - default teaching/demo values
+        # User-adjustable: DIV=8, MUL=6, ADD/SUB=5, LOAD/STORE=4
+        self.op_latencies = {
+            "ADD": 5,
+            "SUB": 5,
+            "MUL": 6,
+            "DIV": 8,
+            "LOAD": 4,
+            "STORE": 4,
+        }
         # Cumulative count of instructions that have finished (write-back done)
         self.completed_total = 0
         # debug flag controls printing (default off for tests)
@@ -164,22 +174,14 @@ class Tomasulo:
             parsed = self.parse_instruction_text(instruction_text)
 
         op = parsed.get("op")
-        # execution durations per op (cycles)
-        durations = {
-            "ADD": 2,
-            "SUB": 2,
-            "MUL": 10,
-            "DIV": 20,
-            "LOAD": 2,
-            "STORE": 2,
-        }
+        # execution durations per op (cycles) - use configured op_latencies
 
         if op in ["ADD", "SUB", "MUL", "DIV"]:
             dest = parsed.get("dest")
             src1 = parsed.get("src1")
             src2 = parsed.get("src2")
 
-            self.log(f"Allocating RS for instruction: {instruction_text}, dest={dest}, src1={src1}, src2={src2}")
+            self.log(f"为指令分配保留站: {instruction_text}，目标={dest}，源1={src1}，源2={src2}")
 
             for rs in self.reservation_stations:
                 if not rs["busy"]:
@@ -190,8 +192,8 @@ class Tomasulo:
                         "dest": dest,
                         "src1": src1,
                         "src2": src2,
-                        "exec_time": durations.get(op, 1),
-                        "time_left": durations.get(op, 1),
+                        "exec_time": self.op_latencies.get(op, 3),
+                        "time_left": self.op_latencies.get(op, 3),
                         "started": False,
                         "result": None,
                         "write_pending": False,
@@ -240,8 +242,8 @@ class Tomasulo:
                         "busy": True,
                         "instruction": instruction_text,
                         "op": op,
-                        "exec_time": durations.get(op, 1),
-                        "time_left": durations.get(op, 1),
+                        "exec_time": self.op_latencies.get(op, 3),
+                        "time_left": self.op_latencies.get(op, 3),
                         "started": False,
                         "result": None,
                         "write_pending": False,
@@ -430,7 +432,7 @@ class Tomasulo:
                 # increment cumulative completed count and record completed operation
                 self.completed_operations.append(f"{instr_text} -> {dest} = {result_val}")
                 self.completed_total += 1
-                self.log(f"Total completed instructions: {self.completed_total}")
+                self.log(f"已完成指令总数：{self.completed_total}")
 
                 # clear the reservation station
                 rs.update({
@@ -458,7 +460,7 @@ class Tomasulo:
         # so termination must rely on how many instructions have been written back.
         all_rs_idle = all(not rs.get("busy") for rs in self.reservation_stations)
         if all_rs_idle and self.completed_total >= len(self.instruction_queue) and len(self.instruction_queue) > 0:
-            self.log("All instructions have been written back. Simulation stopping.")
+            self.log("所有指令已写回，模拟停止。")
             return
 
     def get_completed_operations(self):

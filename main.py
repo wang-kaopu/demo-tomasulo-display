@@ -1,6 +1,6 @@
 import sys
 import copy
-from PyQt5.QtWidgets import QApplication, QMainWindow, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget, QPushButton, QMessageBox, QLabel, QHBoxLayout, QFileDialog, QHeaderView, QSizePolicy
+from PyQt5.QtWidgets import QApplication, QMainWindow, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget, QPushButton, QMessageBox, QLabel, QHBoxLayout, QFileDialog, QHeaderView, QSizePolicy, QLineEdit, QComboBox
 from PyQt5.QtGui import QColor
 from tomasulo import Tomasulo
 from PyQt5.QtWidgets import QPlainTextEdit
@@ -76,6 +76,32 @@ class TomasuloUI(QMainWindow):
         self.load_button = QPushButton("从文件加载指令")
         self.load_button.clicked.connect(self.load_instructions)
         self.layout.addWidget(self.load_button)
+
+        # Manual add instruction: Op combo + dynamic operand inputs + Add button
+        self.add_instr_layout = QHBoxLayout()
+        self.op_combo = QComboBox()
+        # supported ops (keep in sync with tomasulo.parse_instruction_text)
+        self.supported_ops = ["ADD", "SUB", "MUL", "DIV", "LOAD", "STORE"]
+        self.op_combo.addItems(self.supported_ops)
+        self.op_combo.currentIndexChanged.connect(self._on_op_changed)
+
+        # container for operand input widgets
+        self.operand_widget = QWidget()
+        self.operand_layout = QHBoxLayout()
+        self.operand_layout.setContentsMargins(0, 0, 0, 0)
+        self.operand_widget.setLayout(self.operand_layout)
+        self.operand_inputs = []
+
+        self.add_instr_button = QPushButton("Add 指令")
+        self.add_instr_button.clicked.connect(self.add_instruction_from_input)
+
+        self.add_instr_layout.addWidget(self.op_combo)
+        self.add_instr_layout.addWidget(self.operand_widget)
+        self.add_instr_layout.addWidget(self.add_instr_button)
+        self.layout.addLayout(self.add_instr_layout)
+
+        # initialize operand fields for default op
+        self._on_op_changed(0)
 
         # Reset button
         self.reset_button = QPushButton("重置")
@@ -328,6 +354,54 @@ class TomasuloUI(QMainWindow):
                                     "Some instruction lines were invalid and skipped:\n" + "\n".join(errors))
             else:
                 QMessageBox.information(self, "Load Instructions", f"Loaded {loaded} instructions")
+
+    def add_instruction_from_input(self):
+        """Add a single instruction from the QLineEdit into the simulator."""
+        # Build instruction string from selected op and operand inputs
+        op = self.op_combo.currentText().strip()
+        operands = [w.text().strip() for w in self.operand_inputs]
+        # basic validation: ensure required operands are provided
+        if any(not s for s in operands):
+            QMessageBox.warning(self, "Add Instruction", "请填写所有操作数字段。")
+            return
+        instr_text = " ".join([op] + operands)
+        try:
+            self.tomasulo.add_instruction(instr_text)
+            # clear operand inputs (keep op selection)
+            for w in self.operand_inputs:
+                w.clear()
+            self.update_tables()
+            QMessageBox.information(self, "Add Instruction", f"已添加: {instr_text}")
+        except Exception as e:
+            QMessageBox.warning(self, "Add Instruction Failed", f"添加失败: {e}")
+
+    def _on_op_changed(self, index):
+        """Rebuild operand input fields based on selected opcode."""
+        # mapping op -> operand placeholders (order matches parse_instruction_text)
+        mapping = {
+            "ADD": ["dest (e.g. F3)", "src1 (e.g. F1)", "src2 (e.g. F2)"],
+            "SUB": ["dest (e.g. F3)", "src1 (e.g. F1)", "src2 (e.g. F2)"],
+            "MUL": ["dest (e.g. F3)", "src1 (e.g. F1)", "src2 (e.g. F2)"],
+            "DIV": ["dest (e.g. F3)", "src1 (e.g. F1)", "src2 (e.g. F2)"],
+            "LOAD": ["dest (e.g. F1)", "address (int)"],
+            "STORE": ["address (int)", "src (e.g. F1)"],
+        }
+        op = self.op_combo.currentText()
+        placeholders = mapping.get(op, [])
+
+        # clear existing operand widgets
+        for i in reversed(range(self.operand_layout.count())):
+            w = self.operand_layout.itemAt(i).widget()
+            if w:
+                w.setParent(None)
+        self.operand_inputs = []
+
+        # create new inputs
+        for ph in placeholders:
+            le = QLineEdit()
+            le.setPlaceholderText(ph)
+            self.operand_layout.addWidget(le)
+            self.operand_inputs.append(le)
 
     def reset_simulation(self):
         """Reset the simulator state."""

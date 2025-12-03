@@ -1,6 +1,6 @@
 import sys
 import copy
-from PyQt5.QtWidgets import QApplication, QMainWindow, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget, QPushButton, QMessageBox, QLabel, QHBoxLayout, QFileDialog, QHeaderView, QSizePolicy, QLineEdit, QComboBox
+from PyQt5.QtWidgets import QApplication, QMainWindow, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget, QPushButton, QMessageBox, QLabel, QHBoxLayout, QFileDialog, QHeaderView, QSizePolicy, QLineEdit, QComboBox, QAbstractItemView
 from PyQt5.QtGui import QColor
 from tomasulo import Tomasulo
 from PyQt5.QtWidgets import QPlainTextEdit
@@ -9,7 +9,27 @@ class TomasuloUI(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Tomasulo Algorithm Visualization")
-        self.setGeometry(100, 100, 800, 600)
+        # Use available screen geometry to avoid requests larger than the monitor.
+        try:
+            screen = QApplication.primaryScreen()
+            if screen is not None:
+                avail = screen.availableGeometry()
+                # default desired size (reasonable for most displays)
+                desired_w = 900
+                desired_h = 700
+                w = min(desired_w, max(400, avail.width() - 80))
+                h = min(desired_h, max(300, avail.height() - 120))
+                x = avail.x() + 40
+                y = avail.y() + 40
+                self.setGeometry(x, y, w, h)
+                # ensure minimum doesn't exceed available area
+                self.setMinimumSize(400, 300)
+            else:
+                # fallback
+                self.setGeometry(100, 100, 800, 600)
+        except Exception:
+            # very defensive fallback
+            self.setGeometry(100, 100, 800, 600)
 
         self.tomasulo = Tomasulo()
 
@@ -27,7 +47,8 @@ class TomasuloUI(QMainWindow):
         self.instruction_table.setColumnCount(8)
         self.instruction_table.setHorizontalHeaderLabels(["Op", "Dest", "j", "k", "Issue", "Exec Start", "Exec Comp", "Write Result"])
         # increase vertical space for instruction table and stretch columns
-        self.instruction_table.setMinimumHeight(300)
+        # Use a more modest minimum so combined widget sizes don't exceed screen height
+        self.instruction_table.setMinimumHeight(200)
         self.instruction_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         self.layout.addWidget(self.instruction_table)
 
@@ -36,7 +57,7 @@ class TomasuloUI(QMainWindow):
         self.reservation_table.setColumnCount(8)
         self.reservation_table.setHorizontalHeaderLabels(["Time", "Name", "Busy", "Op", "Vj", "Vk", "Qj", "Qk"])
         # make reservation table adapt to window width/height
-        self.reservation_table.setMinimumHeight(180)
+        self.reservation_table.setMinimumHeight(120)
         self.reservation_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         self.reservation_table.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.layout.addWidget(self.reservation_table)
@@ -49,10 +70,23 @@ class TomasuloUI(QMainWindow):
         self.register_table.setRowCount(3)
         self.register_table.setVerticalHeaderLabels(["Qi", "Value", "Status"])
         # make register table adapt to window width; many columns — allow stretch
-        self.register_table.setMinimumHeight(140)
+        self.register_table.setMinimumHeight(100)
         self.register_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         self.register_table.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
         self.layout.addWidget(self.register_table)
+
+        # Make the register table visually compact: set fixed height to exactly
+        # header height + 3 rows * default row height (+ small padding). This
+        # helps keep the UI compact and avoids layout pushing when debug panel
+        # is shown.
+        try:
+            header_h = self.register_table.horizontalHeader().height() or 24
+            row_h = self.register_table.verticalHeader().defaultSectionSize() or 24
+            total_h = header_h + (self.register_table.rowCount() * row_h) + 12
+            self.register_table.setFixedHeight(total_h)
+        except Exception:
+            # if anything fails, leave sizing as-is
+            pass
 
         # Add titles above each table
         self.instruction_title = QLabel("指令状态")
@@ -121,7 +155,9 @@ class TomasuloUI(QMainWindow):
         # Log view (hidden by default)
         self.log_view = QPlainTextEdit()
         self.log_view.setReadOnly(True)
-        self.log_view.setFixedHeight(180)
+        # keep the log view compact (approx. 4 lines) to avoid large geometry changes
+        # typical line height is ~20px; 4 lines ~= 80px. Use 88px for padding.
+        self.log_view.setFixedHeight(88)
         self.log_view.hide()
         self.layout.addWidget(self.log_view)
 
@@ -348,6 +384,16 @@ class TomasuloUI(QMainWindow):
                     errors.append(f"Line {lineno}: {line} -> {e}")
 
             self.update_tables()
+            # after loading and updating tables, scroll to the last loaded instruction for visibility
+            last_row = self.instruction_table.rowCount() - 1
+            if last_row >= 0:
+                item = self.instruction_table.item(last_row, 0)
+                if item:
+                    self.instruction_table.scrollToItem(item, QAbstractItemView.PositionAtCenter)
+                    try:
+                        self.instruction_table.selectRow(last_row)
+                    except Exception:
+                        pass
 
             if errors:
                 QMessageBox.warning(self, "Load Instructions - Some lines failed",
@@ -364,6 +410,12 @@ class TomasuloUI(QMainWindow):
         if any(not s for s in operands):
             QMessageBox.warning(self, "Add Instruction", "请填写所有操作数字段。")
             return
+
+        # validate operand formats (register names / integer addresses)
+        valid, errors = self._validate_all_operands()
+        if not valid:
+            QMessageBox.warning(self, "Add Instruction - 格式错误", "输入项存在格式错误：\n" + "\n".join(errors))
+            return
         instr_text = " ".join([op] + operands)
         try:
             self.tomasulo.add_instruction(instr_text)
@@ -371,6 +423,17 @@ class TomasuloUI(QMainWindow):
             for w in self.operand_inputs:
                 w.clear()
             self.update_tables()
+            # scroll instruction_table to show the newly added instruction (last row)
+            last_row = self.instruction_table.rowCount() - 1
+            if last_row >= 0:
+                item = self.instruction_table.item(last_row, 0)
+                if item:
+                    self.instruction_table.scrollToItem(item, QAbstractItemView.PositionAtCenter)
+                    # also select the newly added row for visibility
+                    try:
+                        self.instruction_table.selectRow(last_row)
+                    except Exception:
+                        pass
             QMessageBox.information(self, "Add Instruction", f"已添加: {instr_text}")
         except Exception as e:
             QMessageBox.warning(self, "Add Instruction Failed", f"添加失败: {e}")
@@ -397,11 +460,88 @@ class TomasuloUI(QMainWindow):
         self.operand_inputs = []
 
         # create new inputs
+        # operand type mapping: 'reg' for registers, 'int' for addresses
+        type_map = {
+            "dest (e.g. F3)": "reg",
+            "src1 (e.g. F1)": "reg",
+            "src2 (e.g. F2)": "reg",
+            "address (int)": "int",
+            "src (e.g. F1)": "reg",
+        }
+
         for ph in placeholders:
             le = QLineEdit()
             le.setPlaceholderText(ph)
+            # attach expected operand type for validation
+            le._operand_type = type_map.get(ph, "reg")
+            le.textChanged.connect(lambda _text, w=le: self._validate_field(w))
             self.operand_layout.addWidget(le)
             self.operand_inputs.append(le)
+            # perform initial validation (empty inputs treated as neutral)
+            self._validate_field(le)
+
+    def _validate_field(self, le):
+        """Validate a single operand QLineEdit and visually highlight errors.
+
+        Rules:
+        - type 'reg': must be like F1..F32
+        - type 'int': must be an integer (allow negative? disallow for addresses)
+        """
+        txt = le.text().strip()
+        typ = getattr(le, "_operand_type", "reg")
+        if txt == "":
+            # empty -> neutral (leave default styling)
+            le.setStyleSheet("")
+            return True
+        if typ == "reg":
+            if not txt.upper().startswith("F"):
+                le.setStyleSheet('background-color: #ffe6e6')
+                return False
+            try:
+                idx = int(txt[1:])
+                if idx < 1 or idx > 32:
+                    le.setStyleSheet('background-color: #ffe6e6')
+                    return False
+            except Exception:
+                le.setStyleSheet('background-color: #ffe6e6')
+                return False
+            # valid register
+            le.setStyleSheet("")
+            return True
+        elif typ == "int":
+            try:
+                _ = int(txt)
+                # treat negative addresses as invalid
+                if int(txt) < 0:
+                    le.setStyleSheet('background-color: #ffe6e6')
+                    return False
+            except Exception:
+                le.setStyleSheet('background-color: #ffe6e6')
+                return False
+            le.setStyleSheet("")
+            return True
+        else:
+            # unknown type -> accept
+            le.setStyleSheet("")
+            return True
+
+    def _validate_all_operands(self):
+        """Validate all operand inputs and return (valid, error_messages)."""
+        errors = []
+        all_ok = True
+        for idx, le in enumerate(self.operand_inputs, start=1):
+            ok = self._validate_field(le)
+            if not ok:
+                all_ok = False
+                typ = getattr(le, "_operand_type", "reg")
+                label = le.placeholderText() or f"operand{idx}"
+                if typ == "reg":
+                    errors.append(f"{label}: 需要寄存器 F1..F32，例如 F3")
+                elif typ == "int":
+                    errors.append(f"{label}: 需要非负整数地址，例如 100")
+                else:
+                    errors.append(f"{label}: 格式不正确")
+        return all_ok, errors
 
     def reset_simulation(self):
         """Reset the simulator state."""

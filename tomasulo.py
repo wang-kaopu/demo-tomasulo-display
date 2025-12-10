@@ -1,7 +1,7 @@
 class Tomasulo:
     def __init__(self):
-        # Initialize reservation stations, registers, and instruction queue
-        # reservation station records include parsed fields and operand bookkeeping
+        # 初始化保留站、寄存器和指令队列
+        # 保留站记录包括解析后的字段和操作数记账
         self.reservation_stations = [
             {
                 "name": f"RS{i}",
@@ -19,16 +19,16 @@ class Tomasulo:
             }
             for i in range(5)
         ]
-        # Initialize registers with floating-point names (F1 to F32)
+        # 初始化浮点寄存器（F1到F32）
         self.registers = {f"F{i}": {"value": 0, "busy": False, "rename": None} for i in range(1, 33)}
-        # instruction_queue holds dicts: {text, issued, issue_cycle, exec_complete, write_cycle}
+        # instruction_queue 保存字典: {text, issued, issue_cycle, exec_complete, write_cycle}
         self.instruction_queue = []
-        # (instruction entries track their own `issued` flag)
+        # (指令条目跟踪自己的 `issued` 标志)
         self.clock = 0
-        self.memory = {i: 0 for i in range(256)}  # Simulated memory
-        self.completed_operations = []  # Track completed operations
-        # Operation latencies (in cycles) - default teaching/demo values
-        # User-adjustable: DIV=8, MUL=6, ADD/SUB=5, LOAD/STORE=4
+        self.memory = {i: 0 for i in range(256)}  # 模拟内存
+        self.completed_operations = []  # 跟踪已完成的操作
+        # 操作延迟（周期数）- 默认教学/演示值
+        # 用户可调: DIV=8, MUL=6, ADD/SUB=5, LOAD/STORE=4
         self.op_latencies = {
             "ADD": 5,
             "SUB": 5,
@@ -37,30 +37,30 @@ class Tomasulo:
             "LOAD": 4,
             "STORE": 4,
         }
-        # Cumulative count of instructions that have finished (write-back done)
+        # 已完成（写回完成）指令的累积计数
         self.completed_total = 0
-        # debug flag controls printing (default off for tests)
+        # 调试标志控制打印（测试时默认为关闭）
         self.debug = False
-        # internal log buffer for UI
+        # 用于UI的内部日志缓冲区
         self.log_lines = []
 
     def log(self, *args, **kwargs):
-        # always append to internal log buffer
+        # 总是附加到内部日志缓冲区
         try:
             msg = " ".join(str(a) for a in args)
         except Exception:
             msg = str(args)
         self.log_lines.append(msg)
-        # print to stdout only when debug enabled
+        # 仅在启用调试时打印到标准输出
         if self.debug:
             print(msg, **kwargs)
 
     def get_logs(self, since=0):
-        """Return log lines starting from index `since`."""
+        """返回从索引 `since` 开始的日志行。"""
         return self.log_lines[since:]
 
     def reset(self):
-        """Reset simulation state (clear RS, registers, counters)."""
+        """重置模拟状态（清空保留站、寄存器、计数器）。"""
         for i, rs in enumerate(self.reservation_stations):
             self.reservation_stations[i] = {
                 "name": rs["name"],
@@ -76,18 +76,18 @@ class Tomasulo:
                 "src2_value": None,
                 "time_left": 0,
             }
-        # reset registers
+        # 重置寄存器
         for reg in list(self.registers.keys()):
             self.registers[reg].update({"value": 0, "busy": False, "rename": None})
-        # clear instruction queue and counters
+        # 清空指令队列和计数器
         self.instruction_queue = []
         self.completed_operations = []
         self.completed_total = 0
         self.clock = 0
 
     def add_instruction(self, instruction):
-        """Add an instruction (text) to the queue as a state dict."""
-        # parse and validate instruction early to avoid repeated parsing later
+        """将一条指令（文本）作为状态字典添加到队列中。"""
+        # 尽早解析和验证指令，以避免以后重复解析
         parsed = self.parse_instruction_text(instruction)
 
         entry = {
@@ -100,12 +100,12 @@ class Tomasulo:
             "write_cycle": None,
         }
         self.instruction_queue.append(entry)
-        # entry contains its own `issued` flag
+        # 条目包含自己的 `issued` 标志
 
     def parse_instruction_text(self, text):
-        """Parse instruction text into a structured dict.
+        """将指令文本解析为结构化字典。
 
-        Supported forms:
+        支持的格式:
         - ADD F3 F1 F2
         - SUB F3 F1 F2
         - MUL F3 F1 F2
@@ -113,55 +113,55 @@ class Tomasulo:
         - LOAD F1 100
         - STORE 100 F1
 
-        Returns dict with keys depending on op. Raises ValueError on format error.
+        返回一个字典，其键取决于操作。格式错误时引发 ValueError。
         """
         if not isinstance(text, str):
-            raise ValueError("Instruction must be a string")
-        # normalize separators: replace commas with spaces, then split
+            raise ValueError("指令必须是字符串")
+        # 规范化分隔符：将逗号替换为空格，然后拆分
         tokens = [tok.strip() for tok in text.replace(',', ' ').split() if tok.strip()]
         if len(tokens) == 0:
-            raise ValueError("Empty instruction")
+            raise ValueError("空指令")
         op = tokens[0].upper()
         if op in ("ADD", "SUB", "MUL", "DIV"):
             if len(tokens) != 4:
-                raise ValueError(f"{op} requires 3 operands: dest src1 src2: '{text}'")
+                raise ValueError(f"{op} 需要3个操作数: dest src1 src2: '{text}'")
             _, dest, src1, src2 = tokens
-            # basic register name validation
+            # 基本的寄存器名称验证
             if dest not in self.registers:
-                raise ValueError(f"Invalid destination register: {dest}")
+                raise ValueError(f"无效的目标寄存器: {dest}")
             if src1 not in self.registers:
-                raise ValueError(f"Invalid src1 register: {src1}")
+                raise ValueError(f"无效的源寄存器1: {src1}")
             if src2 not in self.registers:
-                raise ValueError(f"Invalid src2 register: {src2}")
+                raise ValueError(f"无效的源寄存器2: {src2}")
             return {"op": op, "dest": dest, "src1": src1, "src2": src2}
         elif op == "LOAD":
             if len(tokens) != 3:
-                raise ValueError(f"LOAD requires dest and address: '{text}'")
+                raise ValueError(f"LOAD 需要目标寄存器和地址: '{text}'")
             _, dest, addr = tokens
             if dest not in self.registers:
-                raise ValueError(f"Invalid destination register: {dest}")
+                raise ValueError(f"无效的目标寄存器: {dest}")
             try:
                 addr_i = int(addr)
             except Exception:
-                raise ValueError(f"Invalid LOAD address: {addr}")
+                raise ValueError(f"无效的LOAD地址: {addr}")
             return {"op": op, "dest": dest, "addr": addr_i}
         elif op == "STORE":
             if len(tokens) != 3:
-                raise ValueError(f"STORE requires address and src: '{text}'")
+                raise ValueError(f"STORE 需要地址和源寄存器: '{text}'")
             _, addr, src = tokens
             if src not in self.registers:
-                raise ValueError(f"Invalid STORE source register: {src}")
+                raise ValueError(f"无效的STORE源寄存器: {src}")
             try:
                 addr_i = int(addr)
             except Exception:
-                raise ValueError(f"Invalid STORE address: {addr}")
+                raise ValueError(f"无效的STORE地址: {addr}")
             return {"op": op, "addr": addr_i, "src": src}
         else:
-            raise ValueError(f"Unsupported operation: {op}")
+            raise ValueError(f"不支持的操作: {op}")
 
     def allocate_reservation_station(self, instruction):
-        """Allocate a reservation station for the instruction."""
-        # Accept either instruction text or an instruction entry dict
+        """为指令分配一个保留站。"""
+        # 接受指令文本或指令条目字典
         if isinstance(instruction, dict):
             instruction_text = instruction.get("text")
             parsed = instruction.get("parsed")
@@ -169,12 +169,12 @@ class Tomasulo:
             instruction_text = instruction
             parsed = None
 
-        # parse if needed
+        # 如果需要，进行解析
         if parsed is None:
             parsed = self.parse_instruction_text(instruction_text)
 
         op = parsed.get("op")
-        # execution durations per op (cycles) - use configured op_latencies
+        # 每个操作的执行持续时间（周期）- 使用配置的 op_latencies
 
         if op in ["ADD", "SUB", "MUL", "DIV"]:
             dest = parsed.get("dest")
@@ -202,7 +202,7 @@ class Tomasulo:
                         "src2_ready": False,
                     })
 
-                    # src1 readiness and source mapping
+                    # src1 的就绪状态和源映射
                     if self.registers.get(src1, {}).get("busy"):
                         producer = self.registers[src1].get("rename")
                         rs["src1_source"] = producer if producer else src1
@@ -213,7 +213,7 @@ class Tomasulo:
                         rs["src1_value"] = self.registers[src1]["value"]
                         rs["src1_ready"] = True
 
-                    # src2 readiness and source mapping
+                    # src2 的就绪状态和源映射
                     if self.registers.get(src2, {}).get("busy"):
                         producer = self.registers[src2].get("rename")
                         rs["src2_source"] = producer if producer else src2
@@ -224,12 +224,12 @@ class Tomasulo:
                         rs["src2_value"] = self.registers[src2]["value"]
                         rs["src2_ready"] = True
 
-                    # mark destination register as renamed/busy
+                    # 将目标寄存器标记为重命名/繁忙
                     if dest in self.registers:
                         self.registers[dest]["busy"] = True
-                        # store rename as standardized tag: "RS:<name>"
+                        # 将重命名存储为标准化标签: "RS:<name>"
                         self.registers[dest]["rename"] = f"RS:{rs['name']}"
-                    # if caller passed an instruction entry dict, mark it issued
+                    # 如果调用者传递了一个指令条目字典，则将其标记为已发射
                     if isinstance(instruction, dict):
                         instruction["issued"] = True
                         instruction["issue_cycle"] = self.clock
@@ -254,7 +254,7 @@ class Tomasulo:
                         addr = parsed.get("addr")
                         rs["dest"] = dest
                         rs["addr"] = addr
-                        # immediate/address source standardized tag
+                        # 立即数/地址源的标准化标签
                         rs["src1_source"] = "Imm"
                         rs["src1_value"] = addr
                         rs["src1_ready"] = True
@@ -263,14 +263,14 @@ class Tomasulo:
                         rs["src2_ready"] = True
                         if dest in self.registers:
                             self.registers[dest]["busy"] = True
-                            # store rename as standardized tag: "RS:<name>"
+                            # 将重命名存储为标准化标签: "RS:<name>"
                             self.registers[dest]["rename"] = f"RS:{rs['name']}"
                     else:  # STORE
                         addr = parsed.get("addr")
                         src = parsed.get("src")
                         rs["addr"] = addr
                         rs["src1"] = src
-                        # src operand readiness for STORE
+                        # STORE 的源操作数就绪状态
                         if self.registers.get(src, {}).get("busy"):
                             producer = self.registers[src].get("rename")
                             rs["src1_source"] = producer if producer else src
@@ -283,7 +283,7 @@ class Tomasulo:
                         rs["src2_source"] = "N/A"
                         rs["src2_value"] = None
                         rs["src2_ready"] = True
-                    # if caller passed an instruction entry dict, mark it issued
+                    # 如果调用者传递了一个指令条目字典，则将其标记为已发射
                     if isinstance(instruction, dict):
                         instruction["issued"] = True
                         instruction["issue_cycle"] = self.clock

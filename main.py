@@ -9,12 +9,10 @@ class TomasuloUI(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Tomasulo Algorithm Visualization")
-        # Use available screen geometry to avoid requests larger than the monitor.
         try:
             screen = QApplication.primaryScreen()
             if screen is not None:
                 avail = screen.availableGeometry()
-                # default desired size (reasonable for most displays)
                 desired_w = 900
                 desired_h = 700
                 w = min(desired_w, max(400, avail.width() - 80))
@@ -22,73 +20,63 @@ class TomasuloUI(QMainWindow):
                 x = avail.x() + 40
                 y = avail.y() + 40
                 self.setGeometry(x, y, w, h)
-                # ensure minimum doesn't exceed available area
                 self.setMinimumSize(400, 300)
             else:
-                # fallback
                 self.setGeometry(100, 100, 800, 600)
         except Exception:
-            # very defensive fallback
             self.setGeometry(100, 100, 800, 600)
 
         self.tomasulo = Tomasulo()
 
-        # Main widget
+        # 主部件
         self.central_widget = QWidget()
         self.setCentralWidget(self.central_widget)
 
-        # Layout
+        # 布局
         self.layout = QVBoxLayout()
         self.central_widget.setLayout(self.layout)
 
-        # Instruction status table
+        # 指令状态表
         self.instruction_table = QTableWidget()
-        # Columns: Op, Dest, j, k, Issue, Exec Start, Exec Comp, Write Result
+        # 列：Op, Dest, j, k, Issue, Exec Start, Exec Comp, Write Result
         self.instruction_table.setColumnCount(8)
         self.instruction_table.setHorizontalHeaderLabels(["Op", "Dest", "j", "k", "Issue", "Exec Start", "Exec Comp", "Write Result"])
-        # increase vertical space for instruction table and stretch columns
-        # Use a more modest minimum so combined widget sizes don't exceed screen height
         self.instruction_table.setMinimumHeight(200)
         self.instruction_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         self.layout.addWidget(self.instruction_table)
 
-        # Reservation station table
+        # 保留站表
         self.reservation_table = QTableWidget()
         self.reservation_table.setColumnCount(8)
         self.reservation_table.setHorizontalHeaderLabels(["Time", "Name", "Busy", "Op", "Vj", "Vk", "Qj", "Qk"])
-        # make reservation table adapt to window width/height
+
         self.reservation_table.setMinimumHeight(120)
         self.reservation_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         self.reservation_table.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.layout.addWidget(self.reservation_table)
 
-        # Register result status table
+        # 寄存器结果状态表
         self.register_table = QTableWidget()
-        self.register_table.setColumnCount(32)  # 32 registers F1..F32
+        self.register_table.setColumnCount(32)  # 32 个寄存器 F1..F32
         self.register_table.setHorizontalHeaderLabels([f"F{i}" for i in range(1, 33)])
-        # Three logical rows: Qi (producer RS), Value (register content), Status (Busy/Free)
+        # 三个逻辑行：Qi（生产者 RS）、Value（寄存器内容）、Status（Busy/Free）
         self.register_table.setRowCount(3)
         self.register_table.setVerticalHeaderLabels(["Qi", "Value", "Status"])
-        # make register table adapt to window width; many columns — allow stretch
         self.register_table.setMinimumHeight(100)
         self.register_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         self.register_table.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
         self.layout.addWidget(self.register_table)
 
-        # Make the register table visually compact: set fixed height to exactly
-        # header height + 3 rows * default row height (+ small padding). This
-        # helps keep the UI compact and avoids layout pushing when debug panel
-        # is shown.
         try:
             header_h = self.register_table.horizontalHeader().height() or 24
             row_h = self.register_table.verticalHeader().defaultSectionSize() or 24
             total_h = header_h + (self.register_table.rowCount() * row_h) + 12
             self.register_table.setFixedHeight(total_h)
         except Exception:
-            # if anything fails, leave sizing as-is
+            # 如果任何操作失败，保持尺寸不变
             pass
 
-        # Add titles above each table
+        # 在每个表上方添加标题
         self.instruction_title = QLabel("指令状态")
         self.layout.addWidget(self.instruction_title)
         self.layout.addWidget(self.instruction_table)
@@ -101,25 +89,24 @@ class TomasuloUI(QMainWindow):
         self.layout.addWidget(self.register_title)
         self.layout.addWidget(self.register_table)
 
-        # Step button
+        # 步进按钮
         self.step_button = QPushButton("步进")
         self.step_button.clicked.connect(self.step_simulation)
         self.layout.addWidget(self.step_button)
 
-        # Load Instructions button
+        # 从文件加载指令按钮
         self.load_button = QPushButton("从文件加载指令")
         self.load_button.clicked.connect(self.load_instructions)
         self.layout.addWidget(self.load_button)
 
-        # Manual add instruction: Op combo + dynamic operand inputs + Add button
+        # 添加指令的输入部件
         self.add_instr_layout = QHBoxLayout()
         self.op_combo = QComboBox()
-        # supported ops (keep in sync with tomasulo.parse_instruction_text)
         self.supported_ops = ["ADD", "SUB", "MUL", "DIV", "LOAD", "STORE"]
         self.op_combo.addItems(self.supported_ops)
         self.op_combo.currentIndexChanged.connect(self._on_op_changed)
 
-        # container for operand input widgets
+        # 操作数输入部件的容器
         self.operand_widget = QWidget()
         self.operand_layout = QHBoxLayout()
         self.operand_layout.setContentsMargins(0, 0, 0, 0)
@@ -134,46 +121,40 @@ class TomasuloUI(QMainWindow):
         self.add_instr_layout.addWidget(self.add_instr_button)
         self.layout.addLayout(self.add_instr_layout)
 
-        # initialize operand fields for default op
+        # 为默认操作初始化操作数字段
         self._on_op_changed(0)
 
-        # Reset button
+        # 重置按钮
         self.reset_button = QPushButton("重置")
         self.reset_button.clicked.connect(self.reset_simulation)
         self.layout.addWidget(self.reset_button)
 
-        # Debug checkbox
+        # Debug 复选框
         from PyQt5.QtWidgets import QCheckBox
         self.debug_checkbox = QCheckBox("Debug")
-        # match simulator default (debug False)
         self.debug_checkbox.setChecked(False)
-        # ensure simulator debug flag matches checkbox initial state
         self.tomasulo.debug = False
         self.debug_checkbox.stateChanged.connect(self.toggle_debug)
         self.layout.addWidget(self.debug_checkbox)
 
-        # Log view (hidden by default)
+        # 日志视图（默认隐藏）
         self.log_view = QPlainTextEdit()
         self.log_view.setReadOnly(True)
-        # keep the log view compact (approx. 4 lines) to avoid large geometry changes
-        # typical line height is ~20px; 4 lines ~= 80px. Use 88px for padding.
         self.log_view.setFixedHeight(88)
         self.log_view.hide()
         self.layout.addWidget(self.log_view)
 
-        # Track how many log lines we've shown
+        # 跟踪已显示的日志行数
         self._log_index = 0
 
-        # Ensure tables are updated
-        # previous state snapshot for change-highlighting
         self._prev_state = None
         self.update_tables()
 
     def update_tables(self):
-        """Update all tables with the current state of Tomasulo."""
+        """使用 Tomasulo 的当前状态更新所有表。"""
         state = self.tomasulo.get_state()
 
-        # clear previous highlights
+        # 清除之前的亮点
         def _clear_table_highlights(table):
             for r in range(table.rowCount()):
                 for c in range(table.columnCount()):
@@ -185,14 +166,14 @@ class TomasuloUI(QMainWindow):
         _clear_table_highlights(self.reservation_table)
         _clear_table_highlights(self.register_table)
 
-        # --- Instruction table ---
+        # --- 指令表 ---
         instrs = state.get("instruction_queue", [])
         self.instruction_table.setRowCount(len(instrs))
         for row, entry in enumerate(instrs):
             text = entry.get("text", "")
             parts = text.split()
 
-            # helper to set and highlight a cell against previous state
+            # 辅助函数：设置并高亮单元格与之前状态比较
             def _set_and_highlight(table, r, c, new_text, prev_val=None):
                 item = QTableWidgetItem(new_text)
                 changed = False
@@ -204,7 +185,7 @@ class TomasuloUI(QMainWindow):
                             if prev_entry is None:
                                 changed = True
                             else:
-                                # compare by field
+                                # 按字段比较
                                 if c == 0:
                                     prev_v = prev_entry.get("text", "").split()[0] if prev_entry.get("text") else ""
                                 elif c == 1:
@@ -247,7 +228,7 @@ class TomasuloUI(QMainWindow):
             _set_and_highlight(self.instruction_table, row, 6, exec_comp_status)
             _set_and_highlight(self.instruction_table, row, 7, write_result_status)
 
-        # --- Reservation station table ---
+        # --- 保留站表 ---
         rs_list = state.get("reservation_stations", [])
         self.reservation_table.setRowCount(len(rs_list))
         for r, rs in enumerate(rs_list):
@@ -277,9 +258,9 @@ class TomasuloUI(QMainWindow):
                     item.setBackground(QColor("lightyellow"))
                 self.reservation_table.setItem(r, c, item)
 
-        # --- Register table ---
+        # --- 寄存器表 ---
         regs = state.get("registers", {})
-        # set Qi row, Value row, Status row
+        # 设置 Qi 行、Value 行、Status 行
         for col, reg_name in enumerate(sorted(regs.keys(), key=lambda x: int(x[1:]))):
             reg_data = regs[reg_name]
             # Qi
@@ -299,7 +280,7 @@ class TomasuloUI(QMainWindow):
                 status_item = QTableWidgetItem("Free")
                 status_item.setBackground(QColor("lightgreen"))
 
-            # highlight compares with prev_state
+            # 高亮与 prev_state 比较
             if self._prev_state is not None:
                 try:
                     prev_reg = self._prev_state.get("registers", {}).get(reg_name, {})
@@ -316,26 +297,25 @@ class TomasuloUI(QMainWindow):
             self.register_table.setItem(1, col, val_item)
             self.register_table.setItem(2, col, status_item)
 
-        # Save snapshot for next-step comparison
+        # 保存快照以供下次步骤比较
         try:
             self._prev_state = copy.deepcopy(state)
         except Exception:
             self._prev_state = state
 
-        # (Note: reservation and register tables are updated above with highlighting.)
 
     def step_simulation(self):
-        """Advance the simulation by one clock cycle."""
+        """将模拟推进一个时钟周期。"""
         self.tomasulo.step()
         self.update_tables()
 
-        # If debug is enabled, pull new logs and append to the log view
+        # 如果启用了 debug，拉取新日志并追加到日志视图
         if self.tomasulo.debug:
             new_logs = self.tomasulo.get_logs(self._log_index)
             for line in new_logs:
                 self.log_view.appendPlainText(line)
             self._log_index += len(new_logs)
-            # ensure visible and scrolled to bottom
+            # 确保可见并滚动到底部
             self.log_view.show()
             self.log_view.verticalScrollBar().setValue(self.log_view.verticalScrollBar().maximum())
 
@@ -346,10 +326,10 @@ class TomasuloUI(QMainWindow):
             QMessageBox.information(self, "周期汇总", f"已完成指令:\n{details}")
 
     def show_details(self, row, column):
-        """Show details of the selected reservation station."""
+        """显示所选保留站的详细信息。"""
         rs = self.tomasulo.get_state()["reservation_stations"][row]
-        src1_source = rs.get("src1_source", "N/A")  # Source of the first operand
-        src2_source = rs.get("src2_source", "N/A")  # Source of the second operand
+        src1_source = rs.get("src1_source", "N/A")  # 第一个操作数的来源
+        src2_source = rs.get("src2_source", "N/A")  # 第二个操作数的来源
         details = (
             f"Name: {rs['name']}\n"
             f"Busy: {rs['busy']}\n"
@@ -361,14 +341,14 @@ class TomasuloUI(QMainWindow):
         QMessageBox.information(self, "Reservation Station Details", details)
 
     def load_instructions(self):
-        """Load instructions from a file."""
+        """从文件加载指令。"""
         options = QFileDialog.Options()
         file_path, _ = QFileDialog.getOpenFileName(self, "Open Instruction File", "", "Text Files (*.txt);;All Files (*)", options=options)
         if file_path:
             with open(file_path, "r") as file:
                 lines = [instr.rstrip('\n') for instr in file.readlines()]
 
-            # reset simulator state before loading
+            # 在加载前重置模拟器状态
             self.tomasulo.reset()
 
             errors = []
@@ -384,7 +364,7 @@ class TomasuloUI(QMainWindow):
                     errors.append(f"Line {lineno}: {line} -> {e}")
 
             self.update_tables()
-            # after loading and updating tables, scroll to the last loaded instruction for visibility
+            # 加载并更新表后，滚动到最后加载的指令以便可见
             last_row = self.instruction_table.rowCount() - 1
             if last_row >= 0:
                 item = self.instruction_table.item(last_row, 0)
@@ -402,16 +382,15 @@ class TomasuloUI(QMainWindow):
                 QMessageBox.information(self, "Load Instructions", f"Loaded {loaded} instructions")
 
     def add_instruction_from_input(self):
-        """Add a single instruction from the QLineEdit into the simulator."""
-        # Build instruction string from selected op and operand inputs
+        """从 QLineEdit 中添加单个指令到模拟器。"""
+        # 从选定的 op 和操作数输入构建指令字符串
         op = self.op_combo.currentText().strip()
         operands = [w.text().strip() for w in self.operand_inputs]
-        # basic validation: ensure required operands are provided
         if any(not s for s in operands):
             QMessageBox.warning(self, "Add Instruction", "请填写所有操作数字段。")
             return
 
-        # validate operand formats (register names / integer addresses)
+        # 验证操作数格式（寄存器名 / 整数地址）
         valid, errors = self._validate_all_operands()
         if not valid:
             QMessageBox.warning(self, "Add Instruction - 格式错误", "输入项存在格式错误：\n" + "\n".join(errors))
@@ -419,17 +398,16 @@ class TomasuloUI(QMainWindow):
         instr_text = " ".join([op] + operands)
         try:
             self.tomasulo.add_instruction(instr_text)
-            # clear operand inputs (keep op selection)
+            # 清除操作数输入（保持 op 选择）
             for w in self.operand_inputs:
                 w.clear()
             self.update_tables()
-            # scroll instruction_table to show the newly added instruction (last row)
+            # 滚动 instruction_table 以显示新添加的指令（最后一行）
             last_row = self.instruction_table.rowCount() - 1
             if last_row >= 0:
                 item = self.instruction_table.item(last_row, 0)
                 if item:
                     self.instruction_table.scrollToItem(item, QAbstractItemView.PositionAtCenter)
-                    # also select the newly added row for visibility
                     try:
                         self.instruction_table.selectRow(last_row)
                     except Exception:
@@ -439,8 +417,8 @@ class TomasuloUI(QMainWindow):
             QMessageBox.warning(self, "Add Instruction Failed", f"添加失败: {e}")
 
     def _on_op_changed(self, index):
-        """Rebuild operand input fields based on selected opcode."""
-        # mapping op -> operand placeholders (order matches parse_instruction_text)
+        """根据选定的操作码重建操作数输入字段。"""
+        # op -> 操作数占位符映射
         mapping = {
             "ADD": ["dest (e.g. F3)", "src1 (e.g. F1)", "src2 (e.g. F2)"],
             "SUB": ["dest (e.g. F3)", "src1 (e.g. F1)", "src2 (e.g. F2)"],
@@ -452,15 +430,15 @@ class TomasuloUI(QMainWindow):
         op = self.op_combo.currentText()
         placeholders = mapping.get(op, [])
 
-        # clear existing operand widgets
+        # 清除现有的操作数部件
         for i in reversed(range(self.operand_layout.count())):
             w = self.operand_layout.itemAt(i).widget()
             if w:
                 w.setParent(None)
         self.operand_inputs = []
 
-        # create new inputs
-        # operand type mapping: 'reg' for registers, 'int' for addresses
+        # 创建新的输入
+        # 操作数类型映射：'reg' 用于寄存器，'int' 用于地址
         type_map = {
             "dest (e.g. F3)": "reg",
             "src1 (e.g. F1)": "reg",
@@ -472,25 +450,23 @@ class TomasuloUI(QMainWindow):
         for ph in placeholders:
             le = QLineEdit()
             le.setPlaceholderText(ph)
-            # attach expected operand type for validation
             le._operand_type = type_map.get(ph, "reg")
             le.textChanged.connect(lambda _text, w=le: self._validate_field(w))
             self.operand_layout.addWidget(le)
             self.operand_inputs.append(le)
-            # perform initial validation (empty inputs treated as neutral)
             self._validate_field(le)
 
     def _validate_field(self, le):
-        """Validate a single operand QLineEdit and visually highlight errors.
+        """验证单个操作数 QLineEdit 并视觉上高亮错误。
 
-        Rules:
-        - type 'reg': must be like F1..F32
-        - type 'int': must be an integer (allow negative? disallow for addresses)
+        规则：
+        - 类型 'reg'：必须像 F1..F32
+        - 类型 'int'：必须是整数（不允许负数用于地址）
         """
         txt = le.text().strip()
         typ = getattr(le, "_operand_type", "reg")
         if txt == "":
-            # empty -> neutral (leave default styling)
+            # 空 -> 中性（保留默认样式）
             le.setStyleSheet("")
             return True
         if typ == "reg":
@@ -505,13 +481,13 @@ class TomasuloUI(QMainWindow):
             except Exception:
                 le.setStyleSheet('background-color: #ffe6e6')
                 return False
-            # valid register
+            # 有效寄存器
             le.setStyleSheet("")
             return True
         elif typ == "int":
             try:
                 _ = int(txt)
-                # treat negative addresses as invalid
+                # 将负地址视为无效
                 if int(txt) < 0:
                     le.setStyleSheet('background-color: #ffe6e6')
                     return False
@@ -521,12 +497,12 @@ class TomasuloUI(QMainWindow):
             le.setStyleSheet("")
             return True
         else:
-            # unknown type -> accept
+            # 未知类型 -> 接受
             le.setStyleSheet("")
             return True
 
     def _validate_all_operands(self):
-        """Validate all operand inputs and return (valid, error_messages)."""
+        """验证所有操作数输入并返回 (valid, error_messages)。"""
         errors = []
         all_ok = True
         for idx, le in enumerate(self.operand_inputs, start=1):
@@ -544,17 +520,17 @@ class TomasuloUI(QMainWindow):
         return all_ok, errors
 
     def reset_simulation(self):
-        """Reset the simulator state."""
+        """重置模拟器状态。"""
         self.tomasulo.reset()
         self.update_tables()
 
     def toggle_debug(self, state):
-        """Toggle debug logging in the simulator."""
+        """切换模拟器的调试日志。"""
         enabled = bool(state)
         self.tomasulo.debug = enabled
-        # show or hide the log view
+        # 显示或隐藏日志视图
         if enabled:
-            # populate existing logs
+            # 填充现有日志
             logs = self.tomasulo.get_logs(0)
             self.log_view.clear()
             for line in logs:

@@ -291,7 +291,7 @@ class Tomasulo:
         return False
 
     def execute_instruction(self, instruction):
-        """Execute a single instruction."""
+        """执行单个指令。"""
         parts = instruction.split()
         op = parts[0]
 
@@ -316,15 +316,15 @@ class Tomasulo:
             self.memory[int(address)] = self.registers[src]["value"]
 
     def step(self):
-        """Simulate one clock cycle."""
+        """模拟一个时钟周期。"""
         self.clock += 1
-        self.completed_operations = []  # Reset completed operations for this cycle
+        self.completed_operations = []  # 重置本周期的已完成操作
 
-        # Dispatch instructions from the instruction queue into free reservation stations
-        # Attempt to allocate as many as possible (front of queue first).
-        # We keep instructions in `instruction_queue` for UI display, so track issuance
-        # using `issued_flags` to avoid re-issuing the same instruction repeatedly.
-        # Ensure issued_flags length matches the queue
+        # 将指令从指令队列分派到空闲保留站
+        # 尝试尽可能多地分配（队列前端优先）。
+        # 我们在 `instruction_queue` 中保留指令以供 UI 显示，因此使用
+        # `issued_flags` 跟踪发射以避免重复发射同一指令。
+        # 确保 issued_flags 长度与队列匹配
         for entry in self.instruction_queue:
             if entry.get("issued"):
                 continue
@@ -332,31 +332,31 @@ class Tomasulo:
             if allocated:
                 entry["issued"] = True
 
-        # Update reservation stations: start execution when operands ready, decrement time_left when started
+        # 更新保留站：操作数就绪时开始执行，启动后递减 time_left
         for rs in self.reservation_stations:
             if not rs.get("busy"):
                 continue
-            # if execution hasn't started but operands are ready, mark started
+            # 如果执行尚未开始但操作数就绪，则标记为已启动
             if not rs.get("started") and rs.get("src1_ready") and rs.get("src2_ready"):
                 rs["started"] = True
-                # set time_left to exec_time (already set at allocation)
+                # 将 time_left 设置为 exec_time（已在分配时设置）
                 rs["time_left"] = rs.get("exec_time", 1)
-                # record instruction exec start into instruction_queue entry if present
+                # 如果存在，将指令执行开始记录到 instruction_queue 条目中
                 instr_text = rs.get("instruction")
                 for entry in self.instruction_queue:
                     if entry["text"] == instr_text and entry.get("exec_start_cycle") is None:
                         entry["exec_start_cycle"] = self.clock
                         break
 
-            # decrement if started
+            # 如果已启动则递减
             if rs.get("started"):
                 rs["time_left"] = max(rs.get("time_left", 1) - 1, 0)
 
-            # if finished executing (time_left == 0) and not yet pending writeback, compute result and mark exec complete
+            # 如果执行完成（time_left == 0）且尚未待写回，则计算结果并标记执行完成
             if rs.get("started") and rs.get("time_left", 1) == 0 and not rs.get("write_pending"):
                 instr_text = rs.get("instruction")
                 op = rs.get("op")
-                # compute using operand values saved in RS when possible
+                # 尽可能使用保存在 RS 中的操作数值进行计算
                 if op in ["ADD", "SUB", "MUL", "DIV"]:
                     a = rs.get("src1_value") if rs.get("src1_value") is not None else self.registers.get(rs.get("src1"), {}).get("value", 0)
                     b = rs.get("src2_value") if rs.get("src2_value") is not None else self.registers.get(rs.get("src2"), {}).get("value", 0)
@@ -374,10 +374,10 @@ class Tomasulo:
                 elif op == "STORE":
                     addr = int(str(rs.get("addr")).strip(','))
                     val = rs.get("src1_value") if rs.get("src1_value") is not None else self.registers.get(rs.get("src1"), {}).get("value", 0)
-                    # For STORE, defer memory write until actual writeback
+                    # 对于 STORE，将内存写入推迟到实际写回时
                     rs["result"] = val
 
-                # mark exec complete on this cycle and schedule writeback in next cycle
+                # 在本周期标记执行完成并在下一个周期调度写回
                 for entry in self.instruction_queue:
                     if entry["text"] == instr_text and entry.get("exec_complete") is None:
                         entry["exec_complete"] = self.clock
@@ -385,20 +385,20 @@ class Tomasulo:
 
                 rs["write_pending"] = True
                 rs["write_ready_cycle"] = self.clock + 1
-                # execution finished; clear started flag
+                # 执行完成；清除启动标志
                 rs["started"] = False
-                # continue to next RS (writeback will happen when ready)
+                # 继续到下一个 RS（写回将在就绪时发生）
                 continue
 
-            # handle pending writebacks scheduled for this cycle
+            # 处理计划在本周期进行的待写回
             if rs.get("write_pending") and rs.get("write_ready_cycle", 0) <= self.clock:
                 instr_text = rs.get("instruction")
                 dest = rs.get("dest")
                 result_val = rs.get("result")
 
-                # perform actual writeback: registers or memory
+                # 执行实际写回：寄存器或内存
                 if rs.get("op") == "STORE":
-                    # STORE writes memory now
+                    # STORE 现在写入内存
                     try:
                         addr = int(str(rs.get("addr")).strip(','))
                     except Exception:
@@ -409,7 +409,7 @@ class Tomasulo:
                     if dest in self.registers and result_val is not None:
                         self.registers[dest].update({"value": result_val, "busy": False, "rename": None})
 
-                # Broadcast result to other reservation stations waiting on this RS
+                # 将结果广播到等待此 RS 的其他保留站
                 producer_tag = f"RS:{rs.get('name')}"
                 for other in self.reservation_stations:
                     if other is rs or not other.get("busy"):
@@ -423,18 +423,18 @@ class Tomasulo:
                         other["src2_ready"] = True
                         other["src2_source"] = "Reg"
 
-                # record write cycle into instruction entry
+                # 将写周期记录到指令条目中
                 for entry in self.instruction_queue:
                     if entry["text"] == instr_text and entry.get("write_cycle") is None:
                         entry["write_cycle"] = self.clock
                         break
 
-                # increment cumulative completed count and record completed operation
+                # 增加累计完成计数并记录已完成的操作
                 self.completed_operations.append(f"{instr_text} -> {dest} = {result_val}")
                 self.completed_total += 1
                 self.log(f"已完成指令总数：{self.completed_total}")
 
-                # clear the reservation station
+                # 清空保留站
                 rs.update({
                     "busy": False,
                     "instruction": None,
@@ -455,20 +455,20 @@ class Tomasulo:
                 })
                 
 
-        # Check if all instructions are completed.
-        # Note: we intentionally keep `instruction_queue` contents for UI display,
-        # so termination must rely on how many instructions have been written back.
+        # 检查是否所有指令都已完成。
+        # 注意：我们有意保留 `instruction_queue` 内容以供 UI 显示，
+        # 因此终止必须依赖于有多少指令已被写回。
         all_rs_idle = all(not rs.get("busy") for rs in self.reservation_stations)
         if all_rs_idle and self.completed_total >= len(self.instruction_queue) and len(self.instruction_queue) > 0:
             self.log("所有指令已写回，模拟停止。")
             return
 
     def get_completed_operations(self):
-        """Return the list of completed operations for the current cycle."""
+        """返回当前周期的已完成操作列表。"""
         return self.completed_operations
 
     def get_state(self):
-        """Return the current state for visualization."""
+        """返回当前状态以供可视化。"""
         return {
             "clock": self.clock,
             "reservation_stations": self.reservation_stations,

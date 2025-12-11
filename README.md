@@ -1,46 +1,85 @@
 # Tomasulo 算法可视化
 
-一个用 Python + PyQt 实现的 Tomasulo 算法可视化工具，演示乱序执行与寄存器重命名等核心概念。
+一个用 Python + PyQt5 实现的 Tomasulo 算法可视化工具，用于教学与演示乱序执行、保留站调度、寄存器重命名和数据依赖消除等核心概念。
 
-核心功能概览：
+## 核心功能
 
-- 支持 `ADD/SUB/MUL/DIV/LOAD/STORE` 的指令解析与加载（每行一条指令）。
-- 乱序执行：指令在操作数就绪后即可开始执行（保留站/重命名用于消除 WAR/WAW）。
-- 周期记录：每条指令记录 `issue_cycle`、`exec_start_cycle`、`exec_complete`、`write_cycle`，便于在 UI 中展示。
-- 寄存器重命名：`rename` 字段以 `RS:<name>` 保存。
-- 写回广播：执行完成后在下周期写回并广播结果到等待的保留站。
+- **指令支持**：`ADD`、`SUB`、`MUL`、`DIV`、`LOAD`、`STORE`
+- **乱序执行**：指令在操作数就绪后即可开始执行，通过保留站和寄存器重命名消除 WAR/WAW 冲突
+- **周期追踪**：精确记录每条指令的 Issue、Exec Start、Exec Complete、Write Result 周期
+- **寄存器重命名**：动态重命名机制（格式：`RS:<name>`），实时展示依赖关系
+- **结果广播**：模拟 CDB（Common Data Bus），执行完成后广播结果到等待的保留站
+- **可视化界面**：实时显示指令状态、保留站状态、寄存器结果状态三张表格
+- **交互功能**：
+  - 从文件加载指令
+  - 手动添加指令（带输入验证）
+  - 逐周期单步执行
+  - Debug 日志查看
+  - 状态高亮显示
 
-文件与模块划分：
+## 项目结构
 
-- `tomasulo.py` — 模拟器核心：解析入队、保留站分配、执行推进、写回与广播、内部日志接口。
-- `main.py` — GUI：显示三张表（Instruction / Reservation Stations / Registers），控制加载、逐周期 Step、Reset、Debug 日志视图。
-- `test_all.py` — 单元测试集合：覆盖周期记录、运算正确性、STORE/边缘情况测试。
-- `instructions.txt` — 示例指令文件（每行一条）。
+```
+demo/
+├── tomasulo.py          # 核心模拟器：指令解析、保留站分配、执行调度、写回广播
+├── main.py              # PyQt5 GUI：可视化界面和用户交互
+├── test_all.py          # 完整的单元测试套件
+├── instructions.txt     # 示例指令文件
+├── README.md            # 项目文档
+└── .github/
+    └── copilot-instructions.md  # AI 协作开发指南
+```
 
-安装与运行：
+## 快速开始
+
+### 环境要求
+
+- Python 3.7+
+- PyQt5
+
+### 安装依赖
 
 ```powershell
 pip install PyQt5
+```
+
+### 运行程序
+
+```powershell
 python .\main.py
 ```
 
-运行测试：
+### 使用说明
 
-```powershell
-python -m unittest test_all.py -v
-```
+1. **加载指令**
+   - 点击「从文件加载指令」按钮，选择 `instructions.txt` 或自定义指令文件
+   - 指令格式（每行一条）：
+     ```
+     ADD F1 F2 F3    # F1 = F2 + F3
+     LOAD F4 100     # F4 = Memory[100]
+     STORE 200 F5    # Memory[200] = F5
+     ```
 
-当前未完成功能（简要）：
+2. **手动添加指令**
+   - 从操作下拉框选择指令类型（ADD/SUB/MUL/DIV/LOAD/STORE）
+   - 根据操作类型填写操作数（自动生成对应输入框）
+   - 输入验证：寄存器必须为 F1-F32，地址必须为非负整数
+   - 点击「Add 指令」添加到队列
 
-- 精确的重排序缓冲区（ROB）与 in-order 提交（可选，支持回滚与精确异常）。
-- Store Buffer / 内存按程序序提交保障（可选，保证内存写入的程序顺序）。
-"""
+3. **单步执行**
+   - 点击「步进」按钮推进一个时钟周期
+   - 表格自动刷新并高亮变化的单元格（淡黄色）
+   - 弹窗显示本周期完成的指令
+
+4. **Debug 模式**
+   - 勾选「Debug」复选框查看详细日志
+   - 日志面板显示每个周期的内部状态变化
+
+5. **重置模拟**
+   - 点击「重置」按钮清空所有状态
 # Tomasulo 算法可视化（Python + PyQt）
 
-这是一个用于教学与演示的 Tomasulo 算法可视化工具，使用 Python 与 PyQt5 实现。该工具模拟并可视化乱序执行（out-of-order execution）、保留站（Reservation Stations）、寄存器重命名和写回广播（CDB-like broadcast）。
-
-主要目标：帮助理解 Tomasulo 算法中指令调度、数据相关性消除、以及写回广播如何推动后续指令执行。
-
+Tomasulo 算法可视化工具，使用 Python 与 PyQt5 实现。该工具模拟并可视化乱序执行（out-of-order execution）、保留站（Reservation Stations）、寄存器重命名和写回广播（CDB-like broadcast）。
 ---
 
 ## 主要功能
@@ -61,9 +100,9 @@ python -m unittest test_all.py -v
   - 保留站分配：`allocate_reservation_station`。
   - 执行推进与写回广播：`step`。
   - 状态导出与日志：`get_state`, `get_logs`。
-- `main.py` — PyQt 前端，渲染并交互：加载指令、单步（`单步`）、重置（`重置`）、Debug 日志。
+- `main.py` — PyQt 前端，渲染并交互：加载指令、步进、重置、Debug 日志。
 - `instructions.txt` — 示例指令（可通过 GUI 加载）。
-- `test_step.py`, `test_depend.py` — 简单的验证脚本（演示单条指令与依赖唤醒场景）。
+- `test_all.py` — 单元测试脚本。
 
 ---
 
@@ -114,23 +153,6 @@ python -m unittest discover -v
 # 或
 pytest -q
 ```
-
----
-
-## 开发说明与扩展建议
-
-- 当前实现已包含基本的派发、执行计时与写回广播机制，但并未实现复杂的提交机制（ROB）和精确异常回滚。以下是常见扩展方向：
-  - ROB（重排序缓冲区）：将写回结果先写入 ROB 条目，只有当该 ROB 条目成为头部且无异常时才更新寄存器/内存并释放重命名。这样可实现精确异常与 in-order commit。
-  - Store Buffer / Memory Ordering：单独管理 STORE 的提交顺序，保证内存写入按程序顺序或遵循更复杂的内存模型。
-  - CDB 仲裁：当前实现简单广播到所有等待 RS；如多个 RS 在同一周期需要写回，可额外实现仲裁策略以决定单条或按优先级写回。
-  - UI 优化：更精细的差量渲染、颜色化来源标签（`RS:<name>`、`Reg`、`Imm`）、单元格动画以增强可读性。
-
----
-
-## 已知限制
-
-- GUI 以教学为目标，未针对大规模指令流优化（如果需要更大规模模拟，建议改为差量更新或更高效的数据绑定）。
-- 写回/提交目前较为简化（见上文扩展建议）。
 
 ---
 
@@ -192,4 +214,4 @@ for _ in range(10):
     print(t.get_completed_operations())
 ```
 
-注意：`t.instruction_queue` 中保留了入队条目，UI 使用该队列展示指令生命周期（因此条目不会在写回后自动删除，除非你手动清理或重置）。
+注意：`t.instruction_queue` 中保留了入队条目，UI 使用该队列展示指令生命周期（因此条目不会在写回后自动删除，除非手动清理或重置）。
